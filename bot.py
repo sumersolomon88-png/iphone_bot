@@ -5,7 +5,7 @@ import re
 
 URL = "https://www.ss.lv/lv/electronics/phones/mobile-phones/apple/"
 
-BOT_TOKEN = "8935933040:AAEfLk_llaTbsuUfse57oekzvi0vS-_E7Tg"
+BOT_TOKEN = "ВСТАВЬ_СВОЙ_ТОКЕН"
 CHAT_ID = "5309553879"
 
 seen_links = set()
@@ -16,28 +16,44 @@ headers = {
 
 
 def send_message(text):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": CHAT_ID,
-            "text": text
-        }
-    )
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={
+                "chat_id": CHAT_ID,
+                "text": text
+            }
+        )
+
+        print("sendMessage:", response.status_code)
+        print(response.text)
+
+    except Exception as error:
+        print("Ошибка отправки сообщения:", error)
 
 
 def send_photo(photo, caption):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-        data={
-            "chat_id": CHAT_ID,
-            "photo": photo,
-            "caption": caption
-        }
-    )
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+            data={
+                "chat_id": CHAT_ID,
+                "photo": photo,
+                "caption": caption
+            }
+        )
+
+        print("sendPhoto:", response.status_code)
+        print(response.text)
+
+    except Exception as error:
+        print("Ошибка отправки фотографии:", error)
 
 
 while True:
     try:
+        print("Проверка новых объявлений...")
+
         response = requests.get(URL, headers=headers)
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -100,7 +116,8 @@ while True:
                     photo = image_match.group(1) + "800.jpg"
 
             except Exception as error:
-                print(error)
+                print("Ошибка объявления:", error)
+                continue
 
             message = (
                 f"📱 {title}\n\n"
@@ -110,15 +127,15 @@ while True:
                 f"🔗 {full_link}"
             )
 
+            print(message)
+
             if photo:
                 send_photo(photo, message)
             else:
                 send_message(message)
 
-            print(message)
-
         time.sleep(10)
 
     except Exception as error:
-        print("Ошибка:", error)
+        print("Общая ошибка:", error)
         time.sleep(10)
