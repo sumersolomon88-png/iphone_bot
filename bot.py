@@ -6,48 +6,34 @@ from urllib.parse import urljoin
 
 
 # ============================================================
-# TELEGRAM
-# ============================================================
-
-BOT_TOKEN = "8935933040:AAEfLk_llaTbsuUfse57oekzvi0vS-_E7Tg"
-CHAT_ID = "5309553879"
-
-
-# ============================================================
 # НАСТРОЙКИ
 # ============================================================
 
+SS_URL = "https://www.ss.lv/lv/electronics/phones/mobile-phones/apple/"
+ANDELE_URL = "https://www.andelemandele.lv/perles/tehnika/telefoni/?setlang=lv"
+
+# Токен берём из переменной Railway.
+# В Railway нужно создать переменную:
+# BOT_TOKEN = твой Telegram Bot Token
+BOT_TOKEN = "8935933040:AAEfLk_llaTbsuUfse57oekzvi0vS-_E7Tg"
+
+# Твой chat ID
+CHAT_ID = "5309553879"
+
 CHECK_INTERVAL = 10
-
-SS_URL = (
-    "https://www.ss.lv/lv/electronics/phones/"
-    "mobile-phones/apple/"
-)
-
-ANDELE_URL = (
-    "https://www.andelemandele.lv/"
-    "perles/tehnika/telefoni/?setlang=lv"
-)
-
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/138.0.0.0 Safari/537.36"
+        "Chrome/139.0.0.0 Safari/537.36"
     ),
-    "Accept": (
-        "text/html,application/xhtml+xml,"
-        "application/xml;q=0.9,image/avif,"
-        "image/webp,*/*;q=0.8"
-    ),
-    "Accept-Language": "lv-LV,lv;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Connection": "keep-alive"
+    "Accept-Language": "lv-LV,lv;q=0.9,en-US;q=0.8,en;q=0.7"
 }
 
 
 # ============================================================
-# ПАМЯТЬ
+# ПАМЯТЬ УЖЕ ОТПРАВЛЕННЫХ ОБЪЯВЛЕНИЙ
 # ============================================================
 
 seen_ss = set()
@@ -66,405 +52,110 @@ session.headers.update(HEADERS)
 # TELEGRAM
 # ============================================================
 
-def send_message(text):
+def telegram_request(method, data):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
 
     try:
-
-        response = session.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={
-                "chat_id": CHAT_ID,
-                "text": text,
-                "disable_web_page_preview": False
-            },
-            timeout=15
-        )
-
-        if response.status_code == 200:
-
-            print("Telegram: сообщение отправлено")
-
-            return True
-
-        print(
-            "Telegram ошибка:",
-            response.status_code,
-            response.text
-        )
-
-        return False
-
-    except Exception as error:
-
-        print(
-            "Ошибка Telegram:",
-            error
-        )
-
-        return False
-
-
-# ============================================================
-# ЗАГРУЗКА СТРАНИЦЫ
-# ============================================================
-
-def get_html(url):
-
-    try:
-
-        response = session.get(
+        response = requests.post(
             url,
+            data=data,
             timeout=20
         )
 
-        print(
-            f"HTTP {response.status_code} -> {url}"
-        )
+        print(f"Telegram {method}: {response.status_code}")
 
-        if response.status_code != 200:
-
+        try:
+            result = response.json()
+            print(result)
+            return result
+        except Exception:
+            print(response.text)
             return None
 
-        return response.text
-
     except Exception as error:
-
-        print(
-            "Ошибка загрузки:",
-            url
-        )
-
-        print(error)
-
+        print("Telegram error:", error)
         return None
 
 
+def send_message(text):
+    return telegram_request(
+        "sendMessage",
+        {
+            "chat_id": CHAT_ID,
+            "text": text,
+            "disable_web_page_preview": False
+        }
+    )
+
+
+def send_photo(photo_url, caption):
+    if not photo_url:
+        return send_message(caption)
+
+    result = telegram_request(
+        "sendPhoto",
+        {
+            "chat_id": CHAT_ID,
+            "photo": photo_url,
+            "caption": caption
+        }
+    )
+
+    # Если фотографию Telegram не смог загрузить,
+    # отправляем обычное сообщение.
+    if not result or result.get("ok") is not True:
+        print("Фото не отправилось, отправляю обычное сообщение.")
+        return send_message(caption)
+
+    return result
+
+
 # ============================================================
-# НОРМАЛИЗАЦИЯ ТЕКСТА
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
 
 def clean_text(text):
-
     if not text:
         return ""
 
-    text = text.replace(
-        "\xa0",
-        " "
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
-
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
-# ============================================================
-# SS.LV
-# ПОЛУЧЕНИЕ ОБЪЯВЛЕНИЙ ИЗ СПИСКА
-# ============================================================
+def normalize_url(url, base_url):
+    if not url:
+        return None
 
-def get_ss_ads():
+    return urljoin(base_url, url)
 
-    ads = []
 
-    html = get_html(
-        SS_URL
-    )
-
-    if not html:
-
-        print(
-            "SS.LV: страницу получить не удалось"
+def get_soup(url):
+    try:
+        response = session.get(
+            url,
+            timeout=25
         )
 
-        return ads
+        print(f"HTTP {response.status_code} -> {url}")
 
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
+        if response.status_code != 200:
+            return None
 
-
-    # --------------------------------------------------------
-    # Ищем все ссылки объявлений
-    # --------------------------------------------------------
-
-    links = soup.find_all(
-        "a",
-        href=True
-    )
-
-
-    for link in links:
-
-        href = link.get(
-            "href",
-            ""
+        return BeautifulSoup(
+            response.text,
+            "html.parser"
         )
 
-        if "/msg/" not in href:
+    except Exception as error:
+        print("Ошибка запроса:", error)
+        return None
 
-            continue
 
+def get_page_text(soup):
+    if not soup:
+        return ""
 
-        full_url = urljoin(
-            "https://www.ss.lv",
-            href
-        )
-
-
-        if full_url in {
-            ad["url"]
-            for ad in ads
-        }:
-
-            continue
-
-
-        # ----------------------------------------------------
-        # Пытаемся найти строку таблицы
-        # ----------------------------------------------------
-
-        row = link.find_parent(
-            "tr"
-        )
-
-
-        row_text = ""
-
-        cells = []
-
-        if row:
-
-            row_text = clean_text(
-                row.get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-            cells = [
-                clean_text(
-                    cell.get_text(
-                        " ",
-                        strip=True
-                    )
-                )
-                for cell in row.find_all(
-                    ["td", "th"]
-                )
-            ]
-
-
-        # ----------------------------------------------------
-        # Название
-        # ----------------------------------------------------
-
-        title = clean_text(
-            link.get_text(
-                " ",
-                strip=True
-            )
-        )
-
-
-        # Иногда текст ссылки пустой.
-        # Тогда берём весь текст строки.
-
-        if not title:
-
-            title = row_text
-
-
-        if not title:
-
-            title = "iPhone"
-
-
-        # ----------------------------------------------------
-        # Цена
-        # ----------------------------------------------------
-
-        price = "Не указана"
-
-
-        for cell in cells:
-
-            if "€" in cell:
-
-                price_match = re.search(
-                    r"[\d\s,.]+€",
-                    cell
-                )
-
-                if price_match:
-
-                    price = clean_text(
-                        price_match.group(0)
-                    )
-
-                    break
-
-
-        if price == "Не указана":
-
-            price_match = re.search(
-                r"[\d\s,.]+€",
-                row_text
-            )
-
-            if price_match:
-
-                price = clean_text(
-                    price_match.group(0)
-                )
-
-
-        # ----------------------------------------------------
-        # Память
-        # ----------------------------------------------------
-
-        memory = "Не указана"
-
-
-        memory_match = re.search(
-            r"\b(\d{1,4})\s*(GB|Gb|gb)\b",
-            row_text,
-            re.IGNORECASE
-        )
-
-
-        if memory_match:
-
-            memory = (
-                memory_match.group(1)
-                + " GB"
-            )
-
-
-        # ----------------------------------------------------
-        # Город
-        # ----------------------------------------------------
-
-        city = "Не указан"
-
-
-        cities = [
-            "Rīga",
-            "Riga",
-            "Jūrmala",
-            "Liepāja",
-            "Daugavpils",
-            "Jelgava",
-            "Ventspils",
-            "Rēzekne",
-            "Valmiera",
-            "Ogre"
-        ]
-
-
-        for city_name in cities:
-
-            if re.search(
-                r"\b"
-                + re.escape(city_name)
-                + r"\b",
-                row_text,
-                re.IGNORECASE
-            ):
-
-                city = city_name
-
-                break
-
-
-        # ----------------------------------------------------
-        # Состояние
-        # ----------------------------------------------------
-
-        condition = "Не указано"
-
-        condition_words = [
-            "jaun",
-            "lietota",
-            "lietots",
-            "pērku",
-            "pārdodu"
-        ]
-
-
-        for word in condition_words:
-
-            if word.lower() in row_text.lower():
-
-                if (
-                    "jaun"
-                    in word.lower()
-                ):
-
-                    condition = "Новое"
-
-                elif (
-                    "lietot"
-                    in word.lower()
-                ):
-
-                    condition = "Б/у"
-
-                break
-
-
-        # ----------------------------------------------------
-        # Сохраняем
-        # ----------------------------------------------------
-
-        ads.append({
-
-            "url": full_url,
-
-            "title": title,
-
-            "price": price,
-
-            "memory": memory,
-
-            "city": city,
-
-            "condition": condition
-
-        })
-
-
-    return ads
-
-
-# ============================================================
-# SS.LV
-# ДОПОЛНИТЕЛЬНО ПОЛУЧАЕМ ДАННЫЕ СО СТРАНИЦЫ ОБЪЯВЛЕНИЯ
-# ============================================================
-
-def improve_ss_ad(ad):
-
-    html = get_html(
-        ad["url"]
-    )
-
-    if not html:
-
-        return ad
-
-
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
-
-
-    page_text = clean_text(
+    return clean_text(
         soup.get_text(
             " ",
             strip=True
@@ -472,568 +163,516 @@ def improve_ss_ad(ad):
     )
 
 
-    # --------------------------------------------------------
-    # Название
-    # --------------------------------------------------------
+def extract_price(text):
+    if not text:
+        return "Не указана"
 
-    if (
-        not ad["title"]
-        or ad["title"] == "iPhone"
-        or len(ad["title"]) < 5
-    ):
+    patterns = [
+        r"(\d+(?:[.,]\d+)?)\s*€",
+        r"€\s*(\d+(?:[.,]\d+)?)"
+    ]
 
-        if soup.title:
-
-            title = clean_text(
-                soup.title.get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-            if title:
-
-                ad["title"] = title
-
-
-    # --------------------------------------------------------
-    # Цена
-    # --------------------------------------------------------
-
-    if ad["price"] == "Не указана":
-
-        patterns = [
-
-            r"Cena\s*:?\s*([\d\s,.]+€)",
-
-            r"Цена\s*:?\s*([\d\s,.]+€)",
-
-            r"([\d\s,.]+€)"
-
-        ]
-
-
-        for pattern in patterns:
-
-            match = re.search(
-                pattern,
-                page_text,
-                re.IGNORECASE
-            )
-
-            if match:
-
-                ad["price"] = clean_text(
-                    match.group(1)
-                )
-
-                break
-
-
-    # --------------------------------------------------------
-    # Память
-    # --------------------------------------------------------
-
-    if ad["memory"] == "Не указана":
-
-        memory_match = re.search(
-            r"\b(\d{1,4})\s*(GB|Gb|gb)\b",
-            page_text,
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
             re.IGNORECASE
         )
 
+        if match:
+            return match.group(1).replace(",", ".") + " €"
 
-        if memory_match:
+    return "Не указана"
 
-            ad["memory"] = (
-                memory_match.group(1)
-                + " GB"
+
+def extract_memory(text):
+    if not text:
+        return "Не указана"
+
+    patterns = [
+        r"\b(32|64|128|256|512|1024)\s*GB\b",
+        r"\b(32|64|128|256|512|1024)\s*Gb\b",
+        r"\b(32|64|128|256|512|1024)\s*gb\b"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+            return match.group(1) + " GB"
+
+    return "Не указана"
+
+
+def extract_battery(text):
+    if not text:
+        return "Не указана"
+
+    patterns = [
+        r"battery.{0,30}?(\d{2,3})\s*%",
+        r"bater(?:ijas|ijas veselība|ijas maksimālā kapacitāte).{0,50}?(\d{2,3})\s*%",
+        r"baterija.{0,50}?(\d{2,3})\s*%",
+        r"(\d{2,3})\s*%\s*(?:battery|baterija)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+            value = int(match.group(1))
+
+            if 1 <= value <= 100:
+                return str(value) + "%"
+
+    return "Не указана"
+
+
+def extract_city(text):
+    if not text:
+        return "Не указан"
+
+    cities = [
+        "Rīga",
+        "Riga",
+        "Jūrmala",
+        "Jelgava",
+        "Liepāja",
+        "Daugavpils",
+        "Ventspils",
+        "Valmiera",
+        "Ogre",
+        "Rēzekne"
+    ]
+
+    for city in cities:
+        if re.search(
+            r"\b" + re.escape(city) + r"\b",
+            text,
+            re.IGNORECASE
+        ):
+            return city
+
+    return "Не указан"
+
+
+def extract_image(soup, base_url):
+    if not soup:
+        return None
+
+    # 1. og:image — самый надёжный вариант
+    meta = soup.find(
+        "meta",
+        property="og:image"
+    )
+
+    if meta and meta.get("content"):
+        return normalize_url(
+            meta["content"],
+            base_url
+        )
+
+    # 2. twitter:image
+    meta = soup.find(
+        "meta",
+        attrs={"name": "twitter:image"}
+    )
+
+    if meta and meta.get("content"):
+        return normalize_url(
+            meta["content"],
+            base_url
+        )
+
+    # 3. Старый способ Andele / SS.LV
+    for img in soup.find_all("img"):
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-original")
+        )
+
+        if not src:
+            continue
+
+        src_lower = src.lower()
+
+        if (
+            "logo" not in src_lower
+            and "icon" not in src_lower
+            and "avatar" not in src_lower
+        ):
+            return normalize_url(
+                src,
+                base_url
             )
 
-
-    # --------------------------------------------------------
-    # Город
-    # --------------------------------------------------------
-
-    if ad["city"] == "Не указан":
-
-        cities = [
-            "Rīga",
-            "Riga",
-            "Jūrmala",
-            "Liepāja",
-            "Daugavpils",
-            "Jelgava",
-            "Ventspils",
-            "Rēzekne",
-            "Valmiera",
-            "Ogre"
-        ]
+    return None
 
 
-        for city_name in cities:
+# ============================================================
+# SS.LV
+# ============================================================
 
-            if re.search(
-                r"\b"
-                + re.escape(city_name)
-                + r"\b",
-                page_text,
-                re.IGNORECASE
-            ):
+def get_ss_links():
+    soup = get_soup(SS_URL)
 
-                ad["city"] = city_name
+    if not soup:
+        print("SS.LV: страница не загрузилась.")
+        return []
 
-                break
+    links = []
+
+    for a in soup.find_all("a", href=True):
+
+        href = a.get("href", "")
+
+        if "/msg/" not in href:
+            continue
+
+        full_link = normalize_url(
+            href,
+            "https://www.ss.lv"
+        )
+
+        if full_link and full_link not in links:
+            links.append(full_link)
+
+    print(f"SS.LV: найдено ссылок: {len(links)}")
+
+    return links
 
 
-    return ad
+def parse_ss_ad(url):
+    soup = get_soup(url)
+
+    if not soup:
+        return None
+
+    text = get_page_text(soup)
+
+    title = "iPhone"
+
+    if soup.title:
+        title = clean_text(
+            soup.title.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+    # Убираем лишнюю часть заголовка сайта
+    title = re.sub(
+        r"\s*-\s*Sludinājumi.*$",
+        "",
+        title,
+        flags=re.IGNORECASE
+    )
+
+    price = extract_price(text)
+    memory = extract_memory(text)
+    battery = extract_battery(text)
+    city = extract_city(text)
+    photo = extract_image(
+        soup,
+        "https://www.ss.lv"
+    )
+
+    return {
+        "title": title,
+        "price": price,
+        "memory": memory,
+        "battery": battery,
+        "city": city,
+        "photo": photo,
+        "link": url
+    }
+
+
+def send_ss_ad(ad):
+    message = (
+        "📱 Новое объявление iPhone\n\n"
+        f"📱 {ad['title']}\n"
+        f"💰 Цена: {ad['price']}\n"
+        f"💾 Память: {ad['memory']}\n"
+        f"🔋 Батарея: {ad['battery']}\n"
+        f"📍 Город: {ad['city']}\n\n"
+        f"🔗 {ad['link']}"
+    )
+
+    print("\n" + "=" * 50)
+    print("SS.LV")
+    print(message)
+    print("=" * 50)
+
+    if ad["photo"]:
+        send_photo(
+            ad["photo"],
+            message
+        )
+    else:
+        send_message(message)
 
 
 # ============================================================
 # ANDELE MANDELE
-# ПОИСК IPHONE
 # ============================================================
 
-def get_andele_ads():
+def get_andele_links():
+    soup = get_soup(ANDELE_URL)
 
-    ads = {}
-
-    html = get_html(
-        ANDELE_URL
-    )
-
-    if not html:
-
-        print(
-            "ANDELE: страницу получить не удалось"
-        )
-
+    if not soup:
+        print("ANDELE: страница не загрузилась.")
         return []
 
+    links = []
 
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
+    for a in soup.find_all("a", href=True):
 
+        href = a.get("href", "")
 
-    # --------------------------------------------------------
-    # Ищем ВСЕ ссылки /perle/
-    # --------------------------------------------------------
+        # Нас интересуют именно карточки товаров
+        if "/perle/" not in href:
+            continue
 
-    links = soup.find_all(
-        "a",
-        href=re.compile(
-            r"/perle/"
+        full_link = normalize_url(
+            href,
+            "https://www.andelemandele.lv"
         )
-    )
 
+        if not full_link:
+            continue
+
+        if full_link in links:
+            continue
+
+        links.append(full_link)
 
     print(
-        "ANDELE: найдено ссылок /perle/:",
-        len(links)
+        f"ANDELE: найдено ссылок /perle/: {len(links)}"
     )
 
+    return links
 
-    for link in links:
 
-        href = link.get(
-            "href",
-            ""
-        )
+def is_iphone_andele(soup):
+    """
+    Проверяем всю страницу объявления.
 
+    Andele может указывать:
+    - Apple
+    - iPhone
+    - Mob.telefoni IOS
 
-        if "/perle/" not in href:
+    Поэтому НЕ ищем iPhone только в одном HTML-элементе.
+    """
 
-            continue
+    if not soup:
+        return False
 
+    title = ""
 
-        full_url = urljoin(
-            "https://www.andelemandele.lv",
-            href
-        )
-
-
-        # ----------------------------------------------------
-        # Получаем текст ближайшего блока
-        # ----------------------------------------------------
-
-        text_parts = []
-
-
-        current = link
-
-
-        for _ in range(5):
-
-            if not current:
-
-                break
-
-
-            text = clean_text(
-                current.get_text(
-                    " ",
-                    strip=True
-                )
-            )
-
-
-            if text:
-
-                text_parts.append(
-                    text
-                )
-
-
-            current = current.parent
-
-
-        card_text = " ".join(
-            text_parts
-        )
-
-
-        # ----------------------------------------------------
-        # Название ссылки
-        # ----------------------------------------------------
-
-        title = clean_text(
-            link.get_text(
-                " ",
-                strip=True
-            )
-        )
-
-
-        # ----------------------------------------------------
-        # Проверяем iPhone
-        # ----------------------------------------------------
-
-        combined = (
-            title
-            + " "
-            + card_text
-            + " "
-            + full_url
-        ).lower()
-
-
-        if "iphone" not in combined:
-
-            continue
-
-
-        # ----------------------------------------------------
-        # Цена
-        # ----------------------------------------------------
-
-        price = "Не указана"
-
-
-        price_match = re.search(
-            r"(\d+(?:[.,]\d+)?)\s*€",
-            card_text
-        )
-
-
-        if price_match:
-
-            price = (
-                price_match.group(1)
-                + " €"
-            )
-
-
-        # ----------------------------------------------------
-        # Если название пустое
-        # ----------------------------------------------------
-
-        if not title:
-
-            title = "iPhone"
-
-
-        # ----------------------------------------------------
-        # Сохраняем
-        # ----------------------------------------------------
-
-        ads[full_url] = {
-
-            "url": full_url,
-
-            "title": title,
-
-            "price": price
-
-        }
-
-
-    return list(
-        ads.values()
-    )
-
-
-# ============================================================
-# ANDELE
-# ПОЛУЧЕНИЕ ПОДРОБНОСТЕЙ
-# ============================================================
-
-def improve_andele_ad(ad):
-
-    html = get_html(
-        ad["url"]
-    )
-
-    if not html:
-
-        return ad
-
-
-    soup = BeautifulSoup(
-        html,
-        "html.parser"
-    )
-
-
-    page_text = clean_text(
-        soup.get_text(
+    if soup.title:
+        title = soup.title.get_text(
             " ",
             strip=True
         )
+
+    text = get_page_text(soup)
+
+    combined = (
+        title + " " + text
+    ).lower()
+
+    # Прямое упоминание iPhone
+    if re.search(
+        r"\biphone\b|\biphone\s*\d+",
+        combined,
+        re.IGNORECASE
+    ):
+        return True
+
+    # Apple + категория iOS-телефонов
+    has_apple = re.search(
+        r"\bapple\b",
+        combined,
+        re.IGNORECASE
     )
 
-
-    # --------------------------------------------------------
-    # Название
-    # --------------------------------------------------------
-
-    h1 = soup.find(
-        "h1"
+    has_ios_category = (
+        "mob.telefoni ios" in combined
+        or "mob. telefoni ios" in combined
+        or "mobile phones ios" in combined
     )
 
+    if has_apple and has_ios_category:
+        return True
+
+    # Иногда карточка имеет Apple, но название
+    # модели может быть написано иначе.
+    if has_apple:
+        apple_models = [
+            "iphone",
+            "apple phone",
+            "apple telefon",
+            "apple tālrun"
+        ]
+
+        for model in apple_models:
+            if model in combined:
+                return True
+
+    return False
+
+
+def parse_andele_ad(url):
+    soup = get_soup(url)
+
+    if not soup:
+        return None
+
+    if not is_iphone_andele(soup):
+        print(
+            f"ANDELE: не iPhone -> {url}"
+        )
+        return None
+
+    text = get_page_text(soup)
+
+    title = "iPhone"
+
+    # h1 обычно содержит название объявления
+    h1 = soup.find("h1")
 
     if h1:
-
         title = clean_text(
             h1.get_text(
                 " ",
                 strip=True
             )
         )
-
-
-        if title:
-
-            ad["title"] = title
-
-
-    # --------------------------------------------------------
-    # Цена
-    # --------------------------------------------------------
-
-    price_match = re.search(
-        r"(\d+(?:[.,]\d+)?)\s*€",
-        page_text
-    )
-
-
-    if price_match:
-
-        ad["price"] = (
-            price_match.group(1)
-            + " €"
+    elif soup.title:
+        title = clean_text(
+            soup.title.get_text(
+                " ",
+                strip=True
+            )
         )
 
-
-    # --------------------------------------------------------
-    # Состояние
-    # --------------------------------------------------------
-
-    condition = "Не указано"
-
-
-    if (
-        "Lietots, lieliskā stāvoklī"
-        in page_text
-    ):
-
-        condition = (
-            "Б/у — отличное состояние"
-        )
-
-    elif (
-        "Lietots, labā stāvoklī"
-        in page_text
-    ):
-
-        condition = (
-            "Б/у — хорошее состояние"
-        )
-
-    elif (
-        "Lietots, iespējami trūkumi"
-        in page_text
-    ):
-
-        condition = (
-            "Б/у — есть недостатки"
-        )
-
-    elif "Jauns" in page_text:
-
-        condition = "Новое"
-
-    elif "Lietots" in page_text:
-
-        condition = "Б/у"
-
-
-    ad["condition"] = condition
-
-
-    # --------------------------------------------------------
-    # Память
-    # --------------------------------------------------------
-
-    memory = "Не указана"
-
-
-    memory_match = re.search(
-        r"\b(\d{1,4})\s*(GB|Gb|gb)\b",
-        page_text,
-        re.IGNORECASE
+    price = extract_price(text)
+    memory = extract_memory(text)
+    battery = extract_battery(text)
+    city = extract_city(text)
+    photo = extract_image(
+        soup,
+        "https://www.andelemandele.lv"
     )
 
+    return {
+        "title": title,
+        "price": price,
+        "memory": memory,
+        "battery": battery,
+        "city": city,
+        "photo": photo,
+        "link": url
+    }
 
-    if memory_match:
-
-        memory = (
-            memory_match.group(1)
-            + " GB"
-        )
-
-
-    ad["memory"] = memory
-
-
-    # --------------------------------------------------------
-    # Город
-    # --------------------------------------------------------
-
-    city = "Не указан"
-
-
-    cities = [
-        "Rīga",
-        "Riga",
-        "Jūrmala",
-        "Liepāja",
-        "Daugavpils",
-        "Jelgava",
-        "Ventspils",
-        "Rēzekne",
-        "Valmiera",
-        "Ogre"
-    ]
-
-
-    for city_name in cities:
-
-        if re.search(
-            r"\b"
-            + re.escape(city_name)
-            + r"\b",
-            page_text,
-            re.IGNORECASE
-        ):
-
-            city = city_name
-
-            break
-
-
-    ad["city"] = city
-
-
-    return ad
-
-
-# ============================================================
-# ОТПРАВКА SS.LV
-# ============================================================
-
-def send_ss_ad(ad):
-
-    print("")
-    print(
-        "🆕 НОВОЕ ОБЪЯВЛЕНИЕ SS.LV"
-    )
-
-
-    message = (
-
-        "🟢 SS.LV\n\n"
-
-        f"📱 {ad['title']}\n\n"
-
-        f"💰 {ad['price']}\n"
-
-        f"💾 {ad['memory']}\n"
-
-        f"📍 {ad['city']}\n"
-
-        f"📦 {ad['condition']}\n\n"
-
-        f"🔗 {ad['url']}"
-
-    )
-
-
-    print(message)
-
-
-    send_message(
-        message
-    )
-
-
-# ============================================================
-# ОТПРАВКА ANDELE
-# ============================================================
 
 def send_andele_ad(ad):
-
-    print("")
-    print(
-        "🆕 НОВОЕ ОБЪЯВЛЕНИЕ ANDELE"
-    )
-
-
     message = (
-
-        "🔵 ANDELE MANDELE\n\n"
-
-        f"📱 {ad['title']}\n\n"
-
-        f"💰 {ad['price']}\n"
-
-        f"💾 {ad.get('memory', 'Не указана')}\n"
-
-        f"📍 {ad.get('city', 'Не указан')}\n"
-
-        f"📦 {ad.get('condition', 'Не указано')}\n\n"
-
-        f"🔗 {ad['url']}"
-
+        "🔵 Новое объявление iPhone — Andele Mandele\n\n"
+        f"📱 {ad['title']}\n"
+        f"💰 Цена: {ad['price']}\n"
+        f"💾 Память: {ad['memory']}\n"
+        f"🔋 Батарея: {ad['battery']}\n"
+        f"📍 Город: {ad['city']}\n\n"
+        f"🔗 {ad['link']}"
     )
 
-
+    print("\n" + "=" * 50)
+    print("ANDELE MANDELE")
     print(message)
+    print("=" * 50)
+
+    if ad["photo"]:
+        send_photo(
+            ad["photo"],
+            message
+        )
+    else:
+        send_message(message)
 
 
-    send_message(
-        message
+# ============================================================
+# ПРОВЕРКА SS.LV
+# ============================================================
+
+def check_ss():
+    print("\n🟢 Проверяю SS.LV...")
+
+    links = get_ss_links()
+
+    for link in links:
+
+        if link in seen_ss:
+            continue
+
+        print(
+            f"SS.LV: новое объявление -> {link}"
+        )
+
+        ad = parse_ss_ad(link)
+
+        # Запоминаем только после успешного разбора
+        if ad:
+            seen_ss.add(link)
+            send_ss_ad(ad)
+
+        time.sleep(0.5)
+
+
+# ============================================================
+# ПРОВЕРКА ANDELE
+# ============================================================
+
+def check_andele():
+    print("\n🔵 Проверяю Andele Mandele...")
+
+    links = get_andele_links()
+
+    iphone_count = 0
+
+    for link in links:
+
+        if link in seen_andele:
+            continue
+
+        print(
+            f"ANDELE: проверяю -> {link}"
+        )
+
+        ad = parse_andele_ad(link)
+
+        if ad:
+
+            iphone_count += 1
+
+            seen_andele.add(link)
+
+            send_andele_ad(ad)
+
+        time.sleep(0.5)
+
+    print(
+        f"ANDELE: найдено iPhone: {iphone_count}"
     )
 
 
@@ -1041,229 +680,112 @@ def send_andele_ad(ad):
 # СТАРТОВОЕ СООБЩЕНИЕ
 # ============================================================
 
-print("")
-print("==============================================")
-print("          IPHONE BOT ЗАПУЩЕН")
-print("==============================================")
-print("🟢 SS.LV — включён")
-print("🔵 ANDELE MANDELE — включён")
-print("📱 Только iPhone")
-print(f"⏱ Проверка каждые {CHECK_INTERVAL} секунд")
-print("==============================================")
-print("")
+def send_start_message():
 
-
-send_message(
-    "🤖 Бот запущен!\n\n"
-    "🟢 SS.LV — поиск iPhone\n"
-    "🔵 Andele Mandele — поиск iPhone\n\n"
-    "⏱ Проверка каждые 10 секунд."
-)
-
-
-# ============================================================
-# ПЕРВАЯ ЗАГРУЗКА SS.LV
-# ============================================================
-
-print("")
-print(
-    "Загружаю текущие объявления SS.LV..."
-)
-
-
-initial_ss = get_ss_ads()
-
-
-print(
-    "SS.LV: найдено:",
-    len(initial_ss)
-)
-
-
-for ad in initial_ss:
-
-    seen_ss.add(
-        ad["url"]
+    message = (
+        "🤖 Бот запущен!\n\n"
+        "🟢 SS.LV — поиск iPhone\n"
+        "🔵 Andele Mandele — поиск iPhone\n\n"
+        "📱 Отслеживаются новые объявления\n"
+        "⏱ Проверка каждые 10 секунд"
     )
 
-
-# ============================================================
-# ПЕРВАЯ ЗАГРУЗКА ANDELE
-# ============================================================
-
-print("")
-print(
-    "Загружаю текущие объявления ANDELE..."
-)
-
-
-initial_andele = get_andele_ads()
-
-
-print(
-    "ANDELE: найдено iPhone:",
-    len(initial_andele)
-)
-
-
-for ad in initial_andele:
-
-    seen_andele.add(
-        ad["url"]
-    )
-
-
-# ============================================================
-# ГОТОВ
-# ============================================================
-
-print("")
-print("==============================================")
-print("           БОТ ГОТОВ К РАБОТЕ")
-print("==============================================")
-print(
-    "SS.LV в памяти:",
-    len(seen_ss)
-)
-print(
-    "ANDELE в памяти:",
-    len(seen_andele)
-)
-print("==============================================")
-print("")
+    send_message(message)
 
 
 # ============================================================
 # ОСНОВНОЙ ЦИКЛ
 # ============================================================
 
-while True:
+def main():
 
-    try:
+    print("=" * 60)
+    print("🤖 IPHONE BOT")
+    print("=" * 60)
 
-        print("")
+    print(
+        f"SS.LV: {SS_URL}"
+    )
+
+    print(
+        f"Andele: {ANDELE_URL}"
+    )
+
+    print(
+        f"Интервал: {CHECK_INTERVAL} секунд"
+    )
+
+    print("=" * 60)
+
+    # Проверяем Telegram
+    print("Проверяю Telegram...")
+
+    test = telegram_request(
+        "getMe",
+        {}
+    )
+
+    if not test or not test.get("ok"):
         print(
-            "🔎 Проверяю сайты..."
+            "❌ Telegram не отвечает. "
+            "Проверь BOT_TOKEN."
         )
+        return
 
+    print("✅ Telegram подключён.")
 
-        # ====================================================
-        # SS.LV
-        # ====================================================
+    send_start_message()
 
-        current_ss = get_ss_ads()
+    while True:
 
+        try:
 
-        print(
-            "SS.LV: найдено:",
-            len(current_ss)
-        )
+            print("\n" + "#" * 60)
+            print("🔎 ПРОВЕРКА САЙТОВ...")
+            print("#" * 60)
 
+            check_ss()
 
-        for ad in current_ss:
-
-            url = ad["url"]
-
-
-            if url in seen_ss:
-
-                continue
-
+            check_andele()
 
             print(
-                "🆕 Обнаружено новое SS.LV:",
-                url
+                f"\n⏱ Следующая проверка "
+                f"через {CHECK_INTERVAL} секунд..."
             )
 
-
-            # Дополняем информацию
-            ad = improve_ss_ad(
-                ad
+            time.sleep(
+                CHECK_INTERVAL
             )
 
-
-            send_ss_ad(
-                ad
-            )
-
-
-            seen_ss.add(
-                url
-            )
-
-
-        # ====================================================
-        # ANDELE MANDELE
-        # ====================================================
-
-        current_andele = get_andele_ads()
-
-
-        print(
-            "ANDELE: найдено iPhone:",
-            len(current_andele)
-        )
-
-
-        for ad in current_andele:
-
-            url = ad["url"]
-
-
-            if url in seen_andele:
-
-                continue
-
+        except KeyboardInterrupt:
 
             print(
-                "🆕 Обнаружено новое ANDELE:",
-                url
+                "\n🛑 Бот остановлен."
+            )
+
+            break
+
+        except Exception as error:
+
+            print(
+                "\n❌ ГЛОБАЛЬНАЯ ОШИБКА:"
+            )
+
+            print(error)
+
+            print(
+                f"Повтор через "
+                f"{CHECK_INTERVAL} секунд..."
+            )
+
+            time.sleep(
+                CHECK_INTERVAL
             )
 
 
-            # Дополняем информацию
-            ad = improve_andele_ad(
-                ad
-            )
+# ============================================================
+# ЗАПУСК
+# ============================================================
 
-
-            send_andele_ad(
-                ad
-            )
-
-
-            seen_andele.add(
-                url
-            )
-
-
-        # ====================================================
-        # ОЖИДАНИЕ
-        # ====================================================
-
-        print(
-            f"⏱ Следующая проверка "
-            f"через {CHECK_INTERVAL} секунд..."
-        )
-
-
-        time.sleep(
-            CHECK_INTERVAL
-        )
-
-
-    except Exception as error:
-
-        print("")
-        print("❌ ОШИБКА ОСНОВНОГО ЦИКЛА:")
-        print(error)
-        print("")
-        print(
-            "Бот продолжит работу "
-            "через 10 секунд."
-        )
-
-
-        time.sleep(
-            10
-        )
+if __name__ == "__main__":
+    main()
