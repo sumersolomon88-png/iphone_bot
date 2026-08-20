@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 # TELEGRAM
 # ============================================================
 
-BOT_TOKEN = "8935933040:AAEfLk_llaTbsuUfse57oekzvi0vS-_E7Tg"
+BOT_TOKEN = "8935933040:AAE5WLSLsg5jNIQwjCR10jSrmK3wIQ4R804"
 
 CHAT_ID = "5309553879"
 
