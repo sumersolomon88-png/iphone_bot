@@ -3,24 +3,20 @@ from bs4 import BeautifulSoup
 import time
 import re
 from urllib.parse import urljoin
+from io import BytesIO
 
 
 # ============================================================
 # НАСТРОЙКИ
 # ============================================================
 
-SS_URL = "https://www.ss.lv/lv/electronics/phones/mobile-phones/apple/"
-ANDELE_URL = "https://www.andelemandele.lv/perles/tehnika/telefoni/?setlang=lv"
-
-# Токен берём из переменной Railway.
-# В Railway нужно создать переменную:
-# BOT_TOKEN = твой Telegram Bot Token
 BOT_TOKEN = "8935933040:AAEfLk_llaTbsuUfse57oekzvi0vS-_E7Tg"
-
-# Твой chat ID
 CHAT_ID = "5309553879"
 
 CHECK_INTERVAL = 10
+
+SSLV_URL = "https://www.ss.lv/lv/electronics/phones/mobile-phones/apple/"
+ANDELE_URL = "https://www.andelemandele.lv/perles/tehnika/telefoni/?setlang=lv"
 
 HEADERS = {
     "User-Agent": (
@@ -33,54 +29,49 @@ HEADERS = {
 
 
 # ============================================================
-# ПАМЯТЬ УЖЕ ОТПРАВЛЕННЫХ ОБЪЯВЛЕНИЙ
+# ПАМЯТЬ БОТА
 # ============================================================
 
-seen_ss = set()
+seen_sslv = set()
 seen_andele = set()
 
-
-# ============================================================
-# HTTP SESSION
-# ============================================================
-
-session = requests.Session()
-session.headers.update(HEADERS)
+first_scan_sslv = True
+first_scan_andele = True
 
 
 # ============================================================
 # TELEGRAM
 # ============================================================
 
-def telegram_request(method, data):
+def telegram_request(method, data=None, files=None):
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
 
     try:
         response = requests.post(
             url,
             data=data,
-            timeout=20
+            files=files,
+            timeout=30
         )
 
         print(f"Telegram {method}: {response.status_code}")
 
-        try:
-            result = response.json()
-            print(result)
-            return result
-        except Exception:
+        if response.status_code != 200:
             print(response.text)
-            return None
+
+        return response
 
     except Exception as error:
-        print("Telegram error:", error)
+        print("Ошибка Telegram:", error)
         return None
 
 
 def send_message(text):
-    return telegram_request(
+
+    telegram_request(
         "sendMessage",
-        {
+        data={
             "chat_id": CHAT_ID,
             "text": text,
             "disable_web_page_preview": False
@@ -88,26 +79,91 @@ def send_message(text):
     )
 
 
-def send_photo(photo_url, caption):
-    if not photo_url:
-        return send_message(caption)
+def send_photo(image_bytes, caption):
 
-    result = telegram_request(
-        "sendPhoto",
-        {
+    if not image_bytes:
+        send_message(caption)
+        return
+
+    try:
+
+        files = {
+            "photo": (
+                "photo.jpg",
+                image_bytes,
+                "image/jpeg"
+            )
+        }
+
+        data = {
             "chat_id": CHAT_ID,
-            "photo": photo_url,
             "caption": caption
         }
-    )
 
-    # Если фотографию Telegram не смог загрузить,
-    # отправляем обычное сообщение.
-    if not result or result.get("ok") is not True:
-        print("Фото не отправилось, отправляю обычное сообщение.")
-        return send_message(caption)
+        response = telegram_request(
+            "sendPhoto",
+            data=data,
+            files=files
+        )
 
-    return result
+        if response is None or response.status_code != 200:
+            print("Не удалось отправить фотографию.")
+
+            # Если фотография не отправилась —
+            # хотя бы отправляем текст.
+            send_message(caption)
+
+    except Exception as error:
+
+        print("Ошибка отправки фотографии:", error)
+        send_message(caption)
+
+
+# ============================================================
+# СКАЧИВАНИЕ ФОТОГРАФИИ
+# ============================================================
+
+def download_image(image_url):
+
+    if not image_url:
+        return None
+
+    try:
+
+        print("📸 Скачиваю:", image_url)
+
+        response = requests.get(
+            image_url,
+            headers=HEADERS,
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            print(
+                "Фото не скачалось:",
+                response.status_code
+            )
+            return None
+
+        content_type = response.headers.get(
+            "Content-Type",
+            ""
+        ).lower()
+
+        if "image" not in content_type:
+
+            # Иногда сервер неправильно указывает Content-Type.
+            # Поэтому проверяем и размер.
+            if len(response.content) < 1000:
+                print("Ответ не похож на изображение.")
+                return None
+
+        return response.content
+
+    except Exception as error:
+
+        print("Ошибка загрузки изображения:", error)
+        return None
 
 
 # ============================================================
@@ -115,677 +171,1156 @@ def send_photo(photo_url, caption):
 # ============================================================
 
 def clean_text(text):
+
     if not text:
         return ""
 
     text = re.sub(r"\s+", " ", text)
+
     return text.strip()
 
 
-def normalize_url(url, base_url):
+def absolute_url(url, base):
+
     if not url:
         return None
 
-    return urljoin(base_url, url)
-
-
-def get_soup(url):
-    try:
-        response = session.get(
-            url,
-            timeout=25
-        )
-
-        print(f"HTTP {response.status_code} -> {url}")
-
-        if response.status_code != 200:
-            return None
-
-        return BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
-
-    except Exception as error:
-        print("Ошибка запроса:", error)
-        return None
-
-
-def get_page_text(soup):
-    if not soup:
-        return ""
-
-    return clean_text(
-        soup.get_text(
-            " ",
-            strip=True
-        )
-    )
+    return urljoin(base, url)
 
 
 def extract_price(text):
+
     if not text:
         return "Не указана"
 
     patterns = [
-        r"(\d+(?:[.,]\d+)?)\s*€",
-        r"€\s*(\d+(?:[.,]\d+)?)"
+
+        r"(\d[\d\s.,]*)\s*€",
+
+        r"€\s*(\d[\d\s.,]*)",
+
+        r"Цена[:\s]*([0-9\s.,]+)",
+
+        r"Cena[:\s]*([0-9\s.,]+)\s*€"
     ]
 
     for pattern in patterns:
+
         match = re.search(
             pattern,
             text,
-            re.IGNORECASE
+            re.I
         )
 
         if match:
-            return match.group(1).replace(",", ".") + " €"
+
+            value = clean_text(
+                match.group(1)
+            )
+
+            return value + " €"
 
     return "Не указана"
 
 
 def extract_memory(text):
+
     if not text:
         return "Не указана"
 
     patterns = [
-        r"\b(32|64|128|256|512|1024)\s*GB\b",
-        r"\b(32|64|128|256|512|1024)\s*Gb\b",
-        r"\b(32|64|128|256|512|1024)\s*gb\b"
+
+        r"\b(\d{2,4})\s*GB\b",
+
+        r"\b(\d{2,4})\s*Gb\b",
+
+        r"\b(\d{2,4})\s*gb\b",
+
+        r"\b(\d{2,4})\s*ГБ\b"
     ]
 
     for pattern in patterns:
+
         match = re.search(
             pattern,
             text,
-            re.IGNORECASE
+            re.I
         )
 
         if match:
+
             return match.group(1) + " GB"
 
     return "Не указана"
 
 
 def extract_battery(text):
+
     if not text:
         return "Не указана"
 
     patterns = [
-        r"battery.{0,30}?(\d{2,3})\s*%",
-        r"bater(?:ijas|ijas veselība|ijas maksimālā kapacitāte).{0,50}?(\d{2,3})\s*%",
-        r"baterija.{0,50}?(\d{2,3})\s*%",
-        r"(\d{2,3})\s*%\s*(?:battery|baterija)"
+
+        r"(\d{2,3})\s*%",
+
+        r"battery\s*(?:health)?\s*[:\-]?\s*(\d{2,3})",
+
+        r"baterij[as]*\s*(?:veselība)?\s*[:\-]?\s*(\d{2,3})",
+
+        r"akumulators\s*[:\-]?\s*(\d{2,3})"
     ]
 
     for pattern in patterns:
+
         match = re.search(
             pattern,
             text,
-            re.IGNORECASE
+            re.I
         )
 
         if match:
+
             value = int(match.group(1))
 
             if 1 <= value <= 100:
+
                 return str(value) + "%"
 
     return "Не указана"
 
 
 def extract_city(text):
+
     if not text:
         return "Не указан"
 
     cities = [
+
         "Rīga",
         "Riga",
         "Jūrmala",
-        "Jelgava",
+        "Jurmala",
         "Liepāja",
+        "Liepaja",
         "Daugavpils",
+        "Jelgava",
         "Ventspils",
         "Valmiera",
         "Ogre",
-        "Rēzekne"
+        "Rēzekne",
+        "Rezekne"
     ]
 
     for city in cities:
+
         if re.search(
-            r"\b" + re.escape(city) + r"\b",
+            re.escape(city),
             text,
-            re.IGNORECASE
+            re.I
         ):
+
+            if city.lower() == "riga":
+                return "Rīga"
+
             return city
 
     return "Не указан"
 
 
-def extract_image(soup, base_url):
-    if not soup:
-        return None
+# ============================================================
+# ПОИСК ФОТО В HTML
+# ============================================================
 
-    # 1. og:image — самый надёжный вариант
-    meta = soup.find(
+def find_image(soup, html, base_url):
+
+    # --------------------------------------------------------
+    # 1. OpenGraph image
+    # --------------------------------------------------------
+
+    og_image = soup.find(
         "meta",
         property="og:image"
     )
 
-    if meta and meta.get("content"):
-        return normalize_url(
-            meta["content"],
-            base_url
-        )
+    if og_image:
 
-    # 2. twitter:image
-    meta = soup.find(
-        "meta",
-        attrs={"name": "twitter:image"}
-    )
+        url = og_image.get("content")
 
-    if meta and meta.get("content"):
-        return normalize_url(
-            meta["content"],
-            base_url
-        )
+        if url:
 
-    # 3. Старый способ Andele / SS.LV
-    for img in soup.find_all("img"):
-        src = (
-            img.get("src")
-            or img.get("data-src")
-            or img.get("data-original")
-        )
-
-        if not src:
-            continue
-
-        src_lower = src.lower()
-
-        if (
-            "logo" not in src_lower
-            and "icon" not in src_lower
-            and "avatar" not in src_lower
-        ):
-            return normalize_url(
-                src,
+            return absolute_url(
+                url,
                 base_url
             )
+
+
+    # --------------------------------------------------------
+    # 2. Twitter image
+    # --------------------------------------------------------
+
+    twitter_image = soup.find(
+        "meta",
+        attrs={
+            "name": "twitter:image"
+        }
+    )
+
+    if twitter_image:
+
+        url = twitter_image.get("content")
+
+        if url:
+
+            return absolute_url(
+                url,
+                base_url
+            )
+
+
+    # --------------------------------------------------------
+    # 3. img src
+    # --------------------------------------------------------
+
+    for img in soup.find_all("img"):
+
+        for attribute in [
+            "src",
+            "data-src",
+            "data-original",
+            "data-lazy-src"
+        ]:
+
+            url = img.get(attribute)
+
+            if not url:
+                continue
+
+            url = absolute_url(
+                url,
+                base_url
+            )
+
+            if not url:
+                continue
+
+            # Не берём маленькие UI-иконки.
+            lower = url.lower()
+
+            if any(
+                word in lower
+                for word in [
+                    "logo",
+                    "icon",
+                    "avatar",
+                    "sprite"
+                ]
+            ):
+
+                continue
+
+            return url
+
+
+    # --------------------------------------------------------
+    # 4. Поиск URL изображения в HTML
+    # --------------------------------------------------------
+
+    image_patterns = [
+
+        r'https?://[^"\']+\.(?:jpg|jpeg|png|webp)',
+
+        r'//[^"\']+\.(?:jpg|jpeg|png|webp)'
+    ]
+
+    for pattern in image_patterns:
+
+        match = re.search(
+            pattern,
+            html,
+            re.I
+        )
+
+        if match:
+
+            url = match.group(0)
+
+            if url.startswith("//"):
+                url = "https:" + url
+
+            return url
+
 
     return None
 
 
 # ============================================================
-# SS.LV
+# SS.LV — ПОЛУЧЕНИЕ ОБЪЯВЛЕНИЙ
 # ============================================================
 
-def get_ss_links():
-    soup = get_soup(SS_URL)
+def get_sslv_list():
 
-    if not soup:
-        print("SS.LV: страница не загрузилась.")
+    print("🔎 SS.LV: проверяю сайт...")
+
+    try:
+
+        response = requests.get(
+            SSLV_URL,
+            headers=HEADERS,
+            timeout=30
+        )
+
+        print(
+            "SS.LV HTTP:",
+            response.status_code
+        )
+
+        if response.status_code != 200:
+
+            return []
+
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+
+        links = []
+
+        for link in soup.find_all(
+            "a",
+            href=True
+        ):
+
+            href = link["href"]
+
+            if "/msg/" not in href:
+                continue
+
+            full_link = absolute_url(
+                href,
+                "https://www.ss.lv"
+            )
+
+            if full_link:
+
+                if full_link not in links:
+
+                    links.append(full_link)
+
+
+        print(
+            "SS.LV: найдено:",
+            len(links)
+        )
+
+        return links
+
+
+    except Exception as error:
+
+        print(
+            "SS.LV ошибка:",
+            error
+        )
+
         return []
 
-    links = []
 
-    for a in soup.find_all("a", href=True):
+# ============================================================
+# SS.LV — ПОЛУЧЕНИЕ ДАННЫХ ОБЪЯВЛЕНИЯ
+# ============================================================
 
-        href = a.get("href", "")
+def parse_sslv_ad(url):
 
-        if "/msg/" not in href:
-            continue
+    try:
 
-        full_link = normalize_url(
-            href,
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=30
+        )
+
+        if response.status_code != 200:
+
+            print(
+                "SS.LV объявление HTTP:",
+                response.status_code
+            )
+
+            return None
+
+
+        html = response.text
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
+
+        # ----------------------------------------------------
+        # TITLE
+        # ----------------------------------------------------
+
+        title = "Не указано"
+
+        if soup.title:
+
+            title = clean_text(
+                soup.title.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+        # ----------------------------------------------------
+        # Весь текст страницы
+        # ----------------------------------------------------
+
+        page_text = clean_text(
+            soup.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # PRICE
+        # ----------------------------------------------------
+
+        price = extract_price(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # MEMORY
+        # ----------------------------------------------------
+
+        memory = extract_memory(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # BATTERY
+        # ----------------------------------------------------
+
+        battery = extract_battery(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # CITY
+        # ----------------------------------------------------
+
+        city = extract_city(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # IMAGE
+        # ----------------------------------------------------
+
+        image_url = find_image(
+            soup,
+            html,
             "https://www.ss.lv"
         )
 
-        if full_link and full_link not in links:
-            links.append(full_link)
 
-    print(f"SS.LV: найдено ссылок: {len(links)}")
+        return {
+            "title": title,
+            "price": price,
+            "memory": memory,
+            "battery": battery,
+            "city": city,
+            "url": url,
+            "image": image_url
+        }
 
-    return links
 
+    except Exception as error:
 
-def parse_ss_ad(url):
-    soup = get_soup(url)
+        print(
+            "Ошибка SS.LV объявления:",
+            error
+        )
 
-    if not soup:
         return None
 
-    text = get_page_text(soup)
 
-    title = "iPhone"
+# ============================================================
+# SS.LV — ФОРМИРОВАНИЕ СООБЩЕНИЯ
+# ============================================================
 
-    if soup.title:
-        title = clean_text(
-            soup.title.get_text(
+def build_sslv_message(ad):
+
+    return (
+        "📱 Новое объявление iPhone\n\n"
+
+        f"🟢 SS.LV\n"
+        f"{ad['title']}\n\n"
+
+        f"💰 Цена: {ad['price']}\n"
+        f"💾 Память: {ad['memory']}\n"
+        f"🔋 Батарея: {ad['battery']}\n"
+        f"📍 Город: {ad['city']}\n\n"
+
+        f"🔗 {ad['url']}"
+    )
+
+
+# ============================================================
+# ANDELE — ПОЛУЧЕНИЕ СПИСКА
+# ============================================================
+
+def get_andele_list():
+
+    print("🔎 ANDELE: проверяю сайт...")
+
+    try:
+
+        response = requests.get(
+            ANDELE_URL,
+            headers=HEADERS,
+            timeout=30
+        )
+
+        print(
+            "ANDELE HTTP:",
+            response.status_code
+        )
+
+        if response.status_code != 200:
+
+            return []
+
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+
+        links = []
+
+
+        # ----------------------------------------------------
+        # Ищем реальные ссылки /perle/XXXXXXXX/
+        # ----------------------------------------------------
+
+        for link in soup.find_all(
+            "a",
+            href=True
+        ):
+
+            href = link["href"]
+
+            if not re.search(
+                r"/perle/\d+",
+                href
+            ):
+                continue
+
+
+            full_link = absolute_url(
+                href,
+                "https://www.andelemandele.lv"
+            )
+
+
+            if not full_link:
+                continue
+
+
+            # Убираем query-параметры,
+            # чтобы ссылка была стабильной.
+
+            full_link = full_link.split("?")[0]
+
+
+            if full_link not in links:
+
+                links.append(full_link)
+
+
+        print(
+            "ANDELE: найдено ссылок:",
+            len(links)
+        )
+
+
+        return links
+
+
+    except Exception as error:
+
+        print(
+            "ANDELE ошибка:",
+            error
+        )
+
+        return []
+
+
+# ============================================================
+# ANDELE — ПОЛУЧЕНИЕ ДАННЫХ КАРТОЧКИ
+# ============================================================
+
+def parse_andele_ad(url):
+
+    try:
+
+        print(
+            "ANDELE: проверяю ->",
+            url
+        )
+
+
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=30
+        )
+
+
+        print(
+            "ANDELE HTTP:",
+            response.status_code
+        )
+
+
+        if response.status_code != 200:
+
+            return None
+
+
+        html = response.text
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
+
+        page_text = clean_text(
+            soup.get_text(
                 " ",
                 strip=True
             )
         )
 
-    # Убираем лишнюю часть заголовка сайта
-    title = re.sub(
-        r"\s*-\s*Sludinājumi.*$",
-        "",
-        title,
-        flags=re.IGNORECASE
-    )
 
-    price = extract_price(text)
-    memory = extract_memory(text)
-    battery = extract_battery(text)
-    city = extract_city(text)
-    photo = extract_image(
-        soup,
-        "https://www.ss.lv"
-    )
+        # ----------------------------------------------------
+        # ПРОВЕРЯЕМ БРЕНД
+        # ----------------------------------------------------
 
-    return {
-        "title": title,
-        "price": price,
-        "memory": memory,
-        "battery": battery,
-        "city": city,
-        "photo": photo,
-        "link": url
-    }
-
-
-def send_ss_ad(ad):
-    message = (
-        "📱 Новое объявление iPhone\n\n"
-        f"📱 {ad['title']}\n"
-        f"💰 Цена: {ad['price']}\n"
-        f"💾 Память: {ad['memory']}\n"
-        f"🔋 Батарея: {ad['battery']}\n"
-        f"📍 Город: {ad['city']}\n\n"
-        f"🔗 {ad['link']}"
-    )
-
-    print("\n" + "=" * 50)
-    print("SS.LV")
-    print(message)
-    print("=" * 50)
-
-    if ad["photo"]:
-        send_photo(
-            ad["photo"],
-            message
+        is_apple = bool(
+            re.search(
+                r"\bApple\b",
+                page_text,
+                re.I
+            )
         )
-    else:
-        send_message(message)
 
 
-# ============================================================
-# ANDELE MANDELE
-# ============================================================
+        # ----------------------------------------------------
+        # ПРОВЕРЯЕМ ТИП
+        #
+        # Andele использует:
+        # Mob.telefoni IOS
+        # ----------------------------------------------------
 
-def get_andele_links():
-    soup = get_soup(ANDELE_URL)
+        is_ios_phone = bool(
+            re.search(
+                r"Mob\.?\s*telefoni\s*IOS",
+                page_text,
+                re.I
+            )
+        )
 
-    if not soup:
-        print("ANDELE: страница не загрузилась.")
-        return []
 
-    links = []
+        # ----------------------------------------------------
+        # ДОПОЛНИТЕЛЬНО ПРОВЕРЯЕМ iPhone
+        #
+        # Это помогает, если структура страницы
+        # немного изменится.
+        # ----------------------------------------------------
 
-    for a in soup.find_all("a", href=True):
+        title_text = ""
 
-        href = a.get("href", "")
+        if soup.title:
 
-        # Нас интересуют именно карточки товаров
-        if "/perle/" not in href:
-            continue
+            title_text = clean_text(
+                soup.title.get_text(
+                    " ",
+                    strip=True
+                )
+            )
 
-        full_link = normalize_url(
-            href,
+
+        iphone_in_text = bool(
+            re.search(
+                r"\bi[\s-]?phone\b",
+                page_text,
+                re.I
+            )
+        )
+
+
+        iphone_in_title = bool(
+            re.search(
+                r"\bi[\s-]?phone\b",
+                title_text,
+                re.I
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # ГЛАВНОЕ УСЛОВИЕ
+        #
+        # Apple + Mob.telefoni IOS
+        #
+        # ИЛИ
+        #
+        # Apple + iPhone
+        # ----------------------------------------------------
+
+        is_iphone = (
+
+            (
+                is_apple
+                and
+                is_ios_phone
+            )
+
+            or
+
+            (
+                is_apple
+                and
+                (
+                    iphone_in_text
+                    or
+                    iphone_in_title
+                )
+            )
+        )
+
+
+        if not is_iphone:
+
+            print(
+                "ANDELE: не iPhone ->",
+                url
+            )
+
+            return None
+
+
+        # ----------------------------------------------------
+        # TITLE
+        # ----------------------------------------------------
+
+        title = title_text
+
+        if not title:
+
+            title = "iPhone"
+
+
+        # ----------------------------------------------------
+        # PRICE
+        # ----------------------------------------------------
+
+        price = extract_price(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # MEMORY
+        # ----------------------------------------------------
+
+        memory = extract_memory(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # BATTERY
+        # ----------------------------------------------------
+
+        battery = extract_battery(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # CITY
+        # ----------------------------------------------------
+
+        city = extract_city(
+            page_text
+        )
+
+
+        # ----------------------------------------------------
+        # IMAGE
+        # ----------------------------------------------------
+
+        image_url = find_image(
+            soup,
+            html,
             "https://www.andelemandele.lv"
         )
 
-        if not full_link:
-            continue
 
-        if full_link in links:
-            continue
-
-        links.append(full_link)
-
-    print(
-        f"ANDELE: найдено ссылок /perle/: {len(links)}"
-    )
-
-    return links
-
-
-def is_iphone_andele(soup):
-    """
-    Проверяем всю страницу объявления.
-
-    Andele может указывать:
-    - Apple
-    - iPhone
-    - Mob.telefoni IOS
-
-    Поэтому НЕ ищем iPhone только в одном HTML-элементе.
-    """
-
-    if not soup:
-        return False
-
-    title = ""
-
-    if soup.title:
-        title = soup.title.get_text(
-            " ",
-            strip=True
-        )
-
-    text = get_page_text(soup)
-
-    combined = (
-        title + " " + text
-    ).lower()
-
-    # Прямое упоминание iPhone
-    if re.search(
-        r"\biphone\b|\biphone\s*\d+",
-        combined,
-        re.IGNORECASE
-    ):
-        return True
-
-    # Apple + категория iOS-телефонов
-    has_apple = re.search(
-        r"\bapple\b",
-        combined,
-        re.IGNORECASE
-    )
-
-    has_ios_category = (
-        "mob.telefoni ios" in combined
-        or "mob. telefoni ios" in combined
-        or "mobile phones ios" in combined
-    )
-
-    if has_apple and has_ios_category:
-        return True
-
-    # Иногда карточка имеет Apple, но название
-    # модели может быть написано иначе.
-    if has_apple:
-        apple_models = [
-            "iphone",
-            "apple phone",
-            "apple telefon",
-            "apple tālrun"
-        ]
-
-        for model in apple_models:
-            if model in combined:
-                return True
-
-    return False
-
-
-def parse_andele_ad(url):
-    soup = get_soup(url)
-
-    if not soup:
-        return None
-
-    if not is_iphone_andele(soup):
         print(
-            f"ANDELE: не iPhone -> {url}"
+            "ANDELE: найден iPhone:",
+            title
         )
+
+
+        return {
+            "title": title,
+            "price": price,
+            "memory": memory,
+            "battery": battery,
+            "city": city,
+            "url": url,
+            "image": image_url
+        }
+
+
+    except Exception as error:
+
+        print(
+            "ANDELE ошибка объявления:",
+            error
+        )
+
         return None
 
-    text = get_page_text(soup)
 
-    title = "iPhone"
+# ============================================================
+# ANDELE — СООБЩЕНИЕ
+# ============================================================
 
-    # h1 обычно содержит название объявления
-    h1 = soup.find("h1")
+def build_andele_message(ad):
 
-    if h1:
-        title = clean_text(
-            h1.get_text(
-                " ",
-                strip=True
-            )
-        )
-    elif soup.title:
-        title = clean_text(
-            soup.title.get_text(
-                " ",
-                strip=True
-            )
-        )
+    return (
+        "📱 Новое объявление iPhone\n\n"
 
-    price = extract_price(text)
-    memory = extract_memory(text)
-    battery = extract_battery(text)
-    city = extract_city(text)
-    photo = extract_image(
-        soup,
-        "https://www.andelemandele.lv"
-    )
+        f"🔵 Andele Mandele\n"
+        f"{ad['title']}\n\n"
 
-    return {
-        "title": title,
-        "price": price,
-        "memory": memory,
-        "battery": battery,
-        "city": city,
-        "photo": photo,
-        "link": url
-    }
-
-
-def send_andele_ad(ad):
-    message = (
-        "🔵 Новое объявление iPhone — Andele Mandele\n\n"
-        f"📱 {ad['title']}\n"
         f"💰 Цена: {ad['price']}\n"
         f"💾 Память: {ad['memory']}\n"
         f"🔋 Батарея: {ad['battery']}\n"
         f"📍 Город: {ad['city']}\n\n"
-        f"🔗 {ad['link']}"
+
+        f"🔗 {ad['url']}"
     )
 
-    print("\n" + "=" * 50)
-    print("ANDELE MANDELE")
-    print(message)
-    print("=" * 50)
-
-    if ad["photo"]:
-        send_photo(
-            ad["photo"],
-            message
-        )
-    else:
-        send_message(message)
-
 
 # ============================================================
-# ПРОВЕРКА SS.LV
+# ОБРАБОТКА SS.LV
 # ============================================================
 
-def check_ss():
-    print("\n🟢 Проверяю SS.LV...")
+def check_sslv():
 
-    links = get_ss_links()
+    global first_scan_sslv
+
+    links = get_sslv_list()
+
 
     for link in links:
 
-        if link in seen_ss:
+        # ----------------------------------------------------
+        # Уже видели
+        # ----------------------------------------------------
+
+        if link in seen_sslv:
+
             continue
 
-        print(
-            f"SS.LV: новое объявление -> {link}"
+
+        # Добавляем сразу,
+        # чтобы при ошибке не получить дубль
+        # на следующем цикле.
+
+        seen_sslv.add(link)
+
+
+        ad = parse_sslv_ad(
+            link
         )
 
-        ad = parse_ss_ad(link)
 
-        # Запоминаем только после успешного разбора
-        if ad:
-            seen_ss.add(link)
-            send_ss_ad(ad)
+        if not ad:
 
-        time.sleep(0.5)
+            continue
+
+
+        message = build_sslv_message(
+            ad
+        )
+
+
+        # ----------------------------------------------------
+        # ПЕРВЫЙ ЗАПУСК
+        #
+        # Не отправляем старые объявления.
+        # ----------------------------------------------------
+
+        if first_scan_sslv:
+
+            print(
+                "SS.LV старое объявление:",
+                link
+            )
+
+            continue
+
+
+        print(
+            "📱 SS.LV НОВОЕ ОБЪЯВЛЕНИЕ"
+        )
+
+
+        image = download_image(
+            ad["image"]
+        )
+
+
+        if image:
+
+            send_photo(
+                image,
+                message
+            )
+
+        else:
+
+            send_message(
+                message
+            )
 
 
 # ============================================================
-# ПРОВЕРКА ANDELE
+# ОБРАБОТКА ANDELE
 # ============================================================
 
 def check_andele():
-    print("\n🔵 Проверяю Andele Mandele...")
 
-    links = get_andele_links()
+    global first_scan_andele
 
-    iphone_count = 0
+    links = get_andele_list()
+
 
     for link in links:
 
         if link in seen_andele:
+
             continue
 
-        print(
-            f"ANDELE: проверяю -> {link}"
+
+        seen_andele.add(link)
+
+
+        ad = parse_andele_ad(
+            link
         )
 
-        ad = parse_andele_ad(link)
 
-        if ad:
+        # Если это не iPhone,
+        # больше его не проверяем.
 
-            iphone_count += 1
+        if not ad:
 
-            seen_andele.add(link)
+            continue
 
-            send_andele_ad(ad)
 
-        time.sleep(0.5)
+        message = build_andele_message(
+            ad
+        )
 
-    print(
-        f"ANDELE: найдено iPhone: {iphone_count}"
-    )
+
+        # ----------------------------------------------------
+        # ПЕРВЫЙ ЗАПУСК
+        # ----------------------------------------------------
+
+        if first_scan_andele:
+
+            print(
+                "ANDELE старое объявление:",
+                link
+            )
+
+            continue
+
+
+        print(
+            "📱 ANDELE НОВОЕ ОБЪЯВЛЕНИЕ"
+        )
+
+
+        image = download_image(
+            ad["image"]
+        )
+
+
+        if image:
+
+            send_photo(
+                image,
+                message
+            )
+
+        else:
+
+            send_message(
+                message
+            )
 
 
 # ============================================================
 # СТАРТОВОЕ СООБЩЕНИЕ
 # ============================================================
 
-def send_start_message():
+send_message(
+    "🤖 Бот запущен!\n\n"
 
-    message = (
-        "🤖 Бот запущен!\n\n"
-        "🟢 SS.LV — поиск iPhone\n"
-        "🔵 Andele Mandele — поиск iPhone\n\n"
-        "📱 Отслеживаются новые объявления\n"
-        "⏱ Проверка каждые 10 секунд"
-    )
+    "🟢 SS.LV — поиск iPhone\n"
+    "🔵 Andele Mandele — поиск iPhone\n\n"
 
-    send_message(message)
+    "📸 Фотографии загружаются напрямую\n"
+    "💾 Старые объявления не отправляются\n"
+    f"⏱ Проверка каждые {CHECK_INTERVAL} секунд."
+)
+
+
+# ============================================================
+# ПЕРВАЯ СИНХРОНИЗАЦИЯ
+# ============================================================
+
+print()
+print("=" * 60)
+print("🚀 ПЕРВАЯ СИНХРОНИЗАЦИЯ")
+print("=" * 60)
+print()
+
+print("Собираю существующие объявления...")
+print("Старые объявления отправляться не будут.")
+print()
+
+
+# Первый проход
+
+check_sslv()
+check_andele()
+
+
+# После первого прохода
+# начинаем отправлять только новые.
+
+first_scan_sslv = False
+first_scan_andele = False
+
+
+print()
+print("=" * 60)
+print("✅ СИНХРОНИЗАЦИЯ ЗАВЕРШЕНА")
+print("Теперь бот ищет только НОВЫЕ объявления.")
+print("=" * 60)
+print()
 
 
 # ============================================================
 # ОСНОВНОЙ ЦИКЛ
 # ============================================================
 
-def main():
+while True:
 
-    print("=" * 60)
-    print("🤖 IPHONE BOT")
-    print("=" * 60)
+    try:
 
-    print(
-        f"SS.LV: {SS_URL}"
-    )
+        print()
+        print("=" * 60)
+        print("🔎 ПРОВЕРЯЮ САЙТЫ...")
+        print("=" * 60)
 
-    print(
-        f"Andele: {ANDELE_URL}"
-    )
 
-    print(
-        f"Интервал: {CHECK_INTERVAL} секунд"
-    )
-
-    print("=" * 60)
-
-    # Проверяем Telegram
-    print("Проверяю Telegram...")
-
-    test = telegram_request(
-        "getMe",
-        {}
-    )
-
-    if not test or not test.get("ok"):
-        print(
-            "❌ Telegram не отвечает. "
-            "Проверь BOT_TOKEN."
-        )
-        return
-
-    print("✅ Telegram подключён.")
-
-    send_start_message()
-
-    while True:
+        # ----------------------------------------------------
+        # SS.LV
+        # ----------------------------------------------------
 
         try:
 
-            print("\n" + "#" * 60)
-            print("🔎 ПРОВЕРКА САЙТОВ...")
-            print("#" * 60)
-
-            check_ss()
-
-            check_andele()
-
-            print(
-                f"\n⏱ Следующая проверка "
-                f"через {CHECK_INTERVAL} секунд..."
-            )
-
-            time.sleep(
-                CHECK_INTERVAL
-            )
-
-        except KeyboardInterrupt:
-
-            print(
-                "\n🛑 Бот остановлен."
-            )
-
-            break
+            check_sslv()
 
         except Exception as error:
 
             print(
-                "\n❌ ГЛОБАЛЬНАЯ ОШИБКА:"
+                "Ошибка SS.LV:",
+                error
             )
 
-            print(error)
+
+        # ----------------------------------------------------
+        # ANDELE
+        # ----------------------------------------------------
+
+        try:
+
+            check_andele()
+
+        except Exception as error:
 
             print(
-                f"Повтор через "
-                f"{CHECK_INTERVAL} секунд..."
-            )
-
-            time.sleep(
-                CHECK_INTERVAL
+                "Ошибка ANDELE:",
+                error
             )
 
 
-# ============================================================
-# ЗАПУСК
-# ============================================================
+        # ----------------------------------------------------
+        # ОЖИДАНИЕ
+        # ----------------------------------------------------
 
-if __name__ == "__main__":
-    main()
+        print()
+        print(
+            f"⏱ Следующая проверка через "
+            f"{CHECK_INTERVAL} секунд..."
+        )
+
+        time.sleep(
+            CHECK_INTERVAL
+        )
+
+
+    except KeyboardInterrupt:
+
+        print(
+            "🛑 Бот остановлен."
+        )
+
+        break
+
+
+    except Exception as error:
+
+        print(
+            "❌ Общая ошибка:",
+            error
+        )
+
+        time.sleep(
+            CHECK_INTERVAL
+        )
