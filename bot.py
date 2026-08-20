@@ -1,5 +1,6 @@
 import re
 import time
+import os
 import requests
 
 from bs4 import BeautifulSoup
@@ -23,15 +24,42 @@ CHAT_ID = "5309553879"
 
 CHECK_INTERVAL = 10
 
+# Facebook
+FACEBOOK_ENABLED = True
+
+FACEBOOK_SEARCH_URL = (
+    "https://www.facebook.com/marketplace/search/"
+    "?query=iphone"
+)
+
+# Файл сохранённой Facebook-сессии.
+# Пароль сюда НЕ записываем.
+FACEBOOK_SESSION_FILE = "facebook_session.json"
+
+
+# ============================================================
+# SS.LV
+# ============================================================
+
 SSLV_URL = (
     "https://www.ss.lv/lv/electronics/"
     "phones/mobile-phones/apple/"
 )
 
+
+# ============================================================
+# ANDELE
+# ============================================================
+
 ANDELE_URL = (
     "https://www.andelemandele.lv/"
     "perles/elektronika/telefoni/?setlang=lv"
 )
+
+
+# ============================================================
+# HEADERS
+# ============================================================
 
 HEADERS = {
     "User-Agent": (
@@ -39,9 +67,11 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/139.0.0.0 Safari/537.36"
     ),
+
     "Accept-Language": (
         "lv-LV,lv;q=0.9,en-US;q=0.8,en;q=0.7"
     ),
+
     "Accept": (
         "text/html,application/xhtml+xml,"
         "application/xml;q=0.9,image/avif,image/webp,"
@@ -51,11 +81,14 @@ HEADERS = {
 
 
 # ============================================================
-# УЖЕ ОТПРАВЛЕННЫЕ ОБЪЯВЛЕНИЯ
+# УЖЕ ОТПРАВЛЕННЫЕ
 # ============================================================
 
 seen_sslv = set()
+
 seen_andele = set()
+
+seen_facebook = set()
 
 
 # ============================================================
@@ -63,7 +96,10 @@ seen_andele = set()
 # ============================================================
 
 session = requests.Session()
-session.headers.update(HEADERS)
+
+session.headers.update(
+    HEADERS
+)
 
 
 # ============================================================
@@ -91,6 +127,7 @@ def telegram_call(
         )
 
         try:
+
             result = response.json()
 
         except Exception:
@@ -129,7 +166,7 @@ def send_message(text):
 
 
 # ============================================================
-# ПРОВЕРКА ФОТОГРАФИИ
+# ФОТО
 # ============================================================
 
 def is_probably_image(
@@ -148,12 +185,14 @@ def is_probably_image(
         .lower()
     )
 
-    if not content_type.startswith("image/"):
+    if not content_type.startswith(
+        "image/"
+    ):
         return False
 
-    # Совсем маленькие изображения обычно являются
-    # служебными/placeholder картинками.
-    if len(response.content) < 8000:
+    if len(
+        response.content
+    ) < 8000:
         return False
 
     return True
@@ -177,7 +216,6 @@ def download_image(
         if not is_probably_image(
             response
         ):
-
             return None
 
         return {
@@ -194,8 +232,8 @@ def download_image(
     except Exception as error:
 
         print(
-            f"Фото не загрузилось "
-            f"{photo_url}: {error}"
+            f"Фото не загрузилось: "
+            f"{error}"
         )
 
         return None
@@ -210,7 +248,7 @@ def send_photo(
         return False
 
     print(
-        f"📷 Проверяю фотографию: "
+        f"📷 Загружаю фото: "
         f"{photo_url}"
     )
 
@@ -221,8 +259,7 @@ def send_photo(
     if not image:
 
         print(
-            "❌ Эта ссылка не является "
-            "нормальной фотографией."
+            "❌ Фото не удалось загрузить."
         )
 
         return False
@@ -235,19 +272,23 @@ def send_photo(
                 "chat_id": CHAT_ID,
                 "caption": caption
             },
+
             files={
                 "photo": (
-                    "iphone.jpg",
+                    "photo.jpg",
                     image["content"],
                     image["content_type"]
                 )
             }
         )
 
-        if result and result.get("ok"):
+        if (
+            result
+            and result.get("ok")
+        ):
 
             print(
-                "✅ Фотография отправлена"
+                "✅ Фото отправлено"
             )
 
             return True
@@ -283,12 +324,9 @@ def send_photo_or_message(
 
             return
 
-    print(
-        "ℹ️ Фотография не найдена. "
-        "Отправляю текст."
+    send_message(
+        text
     )
-
-    send_message(text)
 
 
 # ============================================================
@@ -325,7 +363,9 @@ def absolute_url(
         "//"
     ):
 
-        parsed = urlparse(base)
+        parsed = urlparse(
+            base
+        )
 
         return (
             parsed.scheme
@@ -346,11 +386,15 @@ def normalize_url(
     if not url:
         return ""
 
-    return url.split("#")[0].rstrip("/")
+    return (
+        url
+        .split("#")[0]
+        .rstrip("/")
+    )
 
 
 # ============================================================
-# ЦЕНА
+# PRICE
 # ============================================================
 
 def extract_price(
@@ -386,13 +430,16 @@ def extract_price(
                 .strip()
             )
 
-            return value + " €"
+            return (
+                value
+                + " €"
+            )
 
     return "Не указана"
 
 
 # ============================================================
-# ПАМЯТЬ
+# MEMORY
 # ============================================================
 
 def extract_memory(
@@ -437,7 +484,9 @@ def extract_memory(
 
             try:
 
-                number = int(value)
+                number = int(
+                    value
+                )
 
             except Exception:
 
@@ -453,7 +502,7 @@ def extract_memory(
 
 
 # ============================================================
-# БАТАРЕЯ
+# BATTERY
 # ============================================================
 
 def extract_battery(
@@ -505,7 +554,7 @@ def extract_battery(
 
 
 # ============================================================
-# ГОРОД
+# CITY
 # ============================================================
 
 def extract_city(
@@ -582,8 +631,9 @@ def get_title_from_soup(
     soup
 ):
 
-    # Сначала пытаемся взять нормальный H1.
-    h1 = soup.find("h1")
+    h1 = soup.find(
+        "h1"
+    )
 
     if h1:
 
@@ -598,7 +648,6 @@ def get_title_from_soup(
 
             return value
 
-    # Потом OG title.
     og = soup.find(
         "meta",
         property="og:title"
@@ -612,7 +661,6 @@ def get_title_from_soup(
             og["content"]
         )
 
-    # Потом title страницы.
     if soup.title:
 
         return clean_text(
@@ -623,7 +671,7 @@ def get_title_from_soup(
 
 
 # ============================================================
-# SS.LV — ПОЛУЧЕНИЕ НАЗВАНИЯ МОДЕЛИ
+# SS.LV MODEL
 # ============================================================
 
 def extract_sslv_model(
@@ -631,11 +679,6 @@ def extract_sslv_model(
     full_text,
     fallback_title
 ):
-
-    # --------------------------------------------------------
-    # Вариант 1:
-    # ищем строку Marka / Modelis
-    # --------------------------------------------------------
 
     labels = [
         "Marka:",
@@ -666,11 +709,6 @@ def extract_sslv_model(
 
                 return value
 
-    # --------------------------------------------------------
-    # Вариант 2:
-    # ищем iPhone + модель прямо во всём тексте
-    # --------------------------------------------------------
-
     iphone_pattern = re.compile(
         r"\b("
         r"iPhone"
@@ -698,11 +736,6 @@ def extract_sslv_model(
             match.group(1)
         )
 
-    # --------------------------------------------------------
-    # Вариант 3:
-    # ищем iPhone в fallback title
-    # --------------------------------------------------------
-
     match = iphone_pattern.search(
         fallback_title
     )
@@ -717,7 +750,7 @@ def extract_sslv_model(
 
 
 # ============================================================
-# SS.LV — ПОИСК ФОТОГРАФИЙ
+# SS.LV PHOTO SEARCH
 # ============================================================
 
 def add_photo_candidate(
@@ -729,20 +762,14 @@ def add_photo_candidate(
     if not url:
         return
 
-    url = url.strip()
-
-    if not url:
-        return
-
-    # Убираем кавычки.
-    url = url.strip(
-        "\"' "
-    )
-
-    # Иногда встречается escaped URL.
-    url = url.replace(
-        "\\/",
-        "/"
+    url = (
+        url
+        .strip()
+        .strip("\"'")
+        .replace(
+            "\\/",
+            "/"
+        )
     )
 
     url = absolute_url(
@@ -755,7 +782,6 @@ def add_photo_candidate(
 
     low = url.lower()
 
-    # Исключаем явно ненужные картинки.
     bad_words = [
         "logo",
         "icon",
@@ -772,10 +798,10 @@ def add_photo_candidate(
     for word in bad_words:
 
         if word in low:
+
             return
 
-    # Должно быть похоже на изображение.
-    image_extensions = [
+    extensions = [
         ".jpg",
         ".jpeg",
         ".png",
@@ -785,11 +811,9 @@ def add_photo_candidate(
 
     looks_like_image = any(
         ext in low
-        for ext in image_extensions
+        for ext in extensions
     )
 
-    # Также разрешаем SS.LV image URLs
-    # без расширения.
     looks_like_ss_image = (
         "ss.lv" in low
         and (
@@ -802,6 +826,7 @@ def add_photo_candidate(
         not looks_like_image
         and not looks_like_ss_image
     ):
+
         return
 
     if url not in candidates:
@@ -819,10 +844,7 @@ def extract_sslv_photo_candidates(
 
     candidates = []
 
-    # --------------------------------------------------------
-    # 1. ВСЕ IMG
-    # --------------------------------------------------------
-
+    # IMG
     for img in soup.find_all(
         "img"
     ):
@@ -853,7 +875,6 @@ def extract_sslv_photo_candidates(
                     page_url
                 )
 
-        # srcset
         srcset = img.get(
             "srcset"
         )
@@ -867,20 +888,17 @@ def extract_sslv_photo_candidates(
                 if not part:
                     continue
 
-                url = part.split(
-                    " "
-                )[0]
+                image_url = (
+                    part.split(" ")[0]
+                )
 
                 add_photo_candidate(
                     candidates,
-                    url,
+                    image_url,
                     page_url
                 )
 
-    # --------------------------------------------------------
-    # 2. ССЫЛКИ НА ФОТО
-    # --------------------------------------------------------
-
+    # Links
     for a in soup.find_all(
         "a",
         href=True
@@ -901,8 +919,7 @@ def extract_sslv_photo_candidates(
                 ".jpg",
                 ".jpeg",
                 ".png",
-                ".webp",
-                ".avif"
+                ".webp"
             )
         ):
 
@@ -912,20 +929,14 @@ def extract_sslv_photo_candidates(
                 page_url
             )
 
-    # --------------------------------------------------------
-    # 3. msg_img_dir
-    #
-    # НЕ доверяем только 800.jpg.
-    # Создаём несколько возможных вариантов.
-    # --------------------------------------------------------
-
-    dir_matches = re.findall(
+    # msg_img_dir
+    dirs = re.findall(
         r'msg_img_dir\s*=\s*["\']([^"\']+)',
         html,
         re.IGNORECASE
     )
 
-    for image_dir in dir_matches:
+    for image_dir in dirs:
 
         image_dir = (
             image_dir
@@ -933,12 +944,9 @@ def extract_sslv_photo_candidates(
                 "\\/",
                 "/"
             )
-            .strip()
+            .rstrip("/")
+            + "/"
         )
-
-        image_dir = image_dir.rstrip(
-            "/"
-        ) + "/"
 
         for filename in [
             "800.jpg",
@@ -948,21 +956,13 @@ def extract_sslv_photo_candidates(
             "200.jpg"
         ]:
 
-            candidate = (
-                image_dir
-                + filename
-            )
-
             add_photo_candidate(
                 candidates,
-                candidate,
+                image_dir + filename,
                 page_url
             )
 
-    # --------------------------------------------------------
-    # 4. Ищем URL картинок прямо в HTML / JS
-    # --------------------------------------------------------
-
+    # Absolute URLs in HTML
     url_pattern = re.compile(
         r'https?://[^"\']+?\.(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?',
         re.IGNORECASE
@@ -977,33 +977,6 @@ def extract_sslv_photo_candidates(
             match.group(0),
             page_url
         )
-
-    # --------------------------------------------------------
-    # 5. Ищем относительные SS.LV image paths
-    # --------------------------------------------------------
-
-    relative_pattern = re.compile(
-        r'["\']([^"\']+?(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?)["\']',
-        re.IGNORECASE
-    )
-
-    for match in relative_pattern.finditer(
-        html
-    ):
-
-        value = match.group(1)
-
-        if (
-            "ss.lv" in value.lower()
-            or "/images/" in value.lower()
-            or "/img/" in value.lower()
-        ):
-
-            add_photo_candidate(
-                candidates,
-                value,
-                page_url
-            )
 
     return candidates
 
@@ -1027,15 +1000,15 @@ def find_working_sslv_photo(
         f"на фото: {len(candidates)}"
     )
 
-    # Проверяем максимум 20 кандидатов.
     for index, photo_url in enumerate(
         candidates[:20],
         start=1
     ):
 
         print(
-            f"📷 SS.LV: фото "
-            f"{index}/{min(len(candidates), 20)}"
+            f"📷 SS.LV: проверяю "
+            f"фото {index}/"
+            f"{min(len(candidates), 20)}"
         )
 
         image = download_image(
@@ -1046,15 +1019,13 @@ def find_working_sslv_photo(
 
             print(
                 "✅ SS.LV: рабочая "
-                f"фотография найдена: "
-                f"{photo_url}"
+                f"фотография: {photo_url}"
             )
 
             return photo_url
 
     print(
-        "❌ SS.LV: рабочую "
-        "фотографию найти не удалось."
+        "❌ SS.LV: фотография не найдена."
     )
 
     return None
@@ -1101,6 +1072,7 @@ def process_sslv():
             href = a["href"]
 
             if "/msg/" not in href:
+
                 continue
 
             link = absolute_url(
@@ -1126,6 +1098,7 @@ def process_sslv():
         for link in links:
 
             if link in seen_sslv:
+
                 continue
 
             try:
@@ -1156,10 +1129,6 @@ def process_sslv():
                     )
                 )
 
-                # ------------------------------------------------
-                # НАЗВАНИЕ
-                # ------------------------------------------------
-
                 page_title = (
                     get_title_from_soup(
                         ad_soup
@@ -1171,10 +1140,6 @@ def process_sslv():
                     all_text,
                     page_title
                 )
-
-                # ------------------------------------------------
-                # ДАННЫЕ
-                # ------------------------------------------------
 
                 price = extract_price(
                     all_text
@@ -1192,19 +1157,11 @@ def process_sslv():
                     all_text
                 )
 
-                # ------------------------------------------------
-                # ФОТО
-                # ------------------------------------------------
-
                 photo = find_working_sslv_photo(
                     ad_soup,
                     html,
                     link
                 )
-
-                # ------------------------------------------------
-                # СООБЩЕНИЕ
-                # ------------------------------------------------
 
                 message = (
                     "🟢 Новое объявление iPhone\n\n"
@@ -1218,10 +1175,6 @@ def process_sslv():
 
                 send_photo_or_message(
                     photo,
-                    message
-                )
-
-                print(
                     message
                 )
 
@@ -1244,7 +1197,7 @@ def process_sslv():
 
 
 # ============================================================
-# ANDELE — ПРОВЕРКА НА НАСТОЯЩИЙ IPHONE
+# ANDELE IPHONE CHECK
 # ============================================================
 
 def is_real_iphone(
@@ -1322,7 +1275,7 @@ def is_real_iphone(
 
 
 # ============================================================
-# ANDELE — ПОИСК КАРТОЧЕК
+# ANDELE LINKS
 # ============================================================
 
 def get_andele_links(
@@ -1330,7 +1283,7 @@ def get_andele_links(
 ):
 
     print(
-        "🔎 ANDELE: ищу реальные карточки..."
+        "🔎 ANDELE: ищу карточки..."
     )
 
     links = set()
@@ -1357,8 +1310,8 @@ def get_andele_links(
     count = anchors.count()
 
     print(
-        f"ANDELE: найдено ссылок "
-        f"на карточки: {count}"
+        f"ANDELE: найдено ссылок: "
+        f"{count}"
     )
 
     for i in range(
@@ -1394,13 +1347,6 @@ def get_andele_links(
                 )
             )
 
-            if (
-                "andelemandele.lv"
-                not in full_url
-            ):
-
-                continue
-
             links.add(
                 full_url
             )
@@ -1413,7 +1359,103 @@ def get_andele_links(
 
 
 # ============================================================
-# ANDELE — КАРТОЧКА
+# ANDELE IMAGE
+# ============================================================
+
+def get_image_from_soup(
+    soup,
+    base_url
+):
+
+    meta = soup.find(
+        "meta",
+        property="og:image"
+    )
+
+    if meta and meta.get(
+        "content"
+    ):
+
+        url = absolute_url(
+            meta["content"],
+            base_url
+        )
+
+        if download_image(
+            url
+        ):
+
+            return url
+
+    for meta in soup.find_all(
+        "meta"
+    ):
+
+        name = (
+            meta.get("name")
+            or meta.get("property")
+            or ""
+        ).lower()
+
+        if name in (
+            "twitter:image",
+            "twitter:image:src"
+        ):
+
+            if meta.get(
+                "content"
+            ):
+
+                url = absolute_url(
+                    meta["content"],
+                    base_url
+                )
+
+                if download_image(
+                    url
+                ):
+
+                    return url
+
+    for img in soup.find_all(
+        "img"
+    ):
+
+        for attr in (
+            "src",
+            "data-src",
+            "data-original",
+            "data-lazy-src"
+        ):
+
+            src = img.get(
+                attr
+            )
+
+            if not src:
+
+                continue
+
+            src = absolute_url(
+                src,
+                base_url
+            )
+
+            if not src:
+
+                continue
+
+            if download_image(
+                src
+            ):
+
+                return src
+
+    return None
+
+
+# ============================================================
+# ANDELE CARD
 # ============================================================
 
 def parse_andele_card(
@@ -1457,17 +1499,7 @@ def parse_andele_card(
             body_text
         ):
 
-            print(
-                "🔵 ANDELE: НЕ iPhone -> "
-                f"{title[:100]}"
-            )
-
             return None
-
-        print(
-            "📱 ANDELE: IPHONE -> "
-            f"{title}"
-        )
 
         html = page.content()
 
@@ -1476,8 +1508,10 @@ def parse_andele_card(
             "html.parser"
         )
 
-        real_title = get_title_from_soup(
-            soup
+        real_title = (
+            get_title_from_soup(
+                soup
+            )
         )
 
         if (
@@ -1508,65 +1542,6 @@ def parse_andele_card(
             url
         )
 
-        if not photo:
-
-            try:
-
-                images = page.locator(
-                    "img"
-                )
-
-                image_count = images.count()
-
-                for i in range(
-                    min(image_count, 30)
-                ):
-
-                    for attr in [
-                        "src",
-                        "data-src",
-                        "data-original"
-                    ]:
-
-                        src = (
-                            images
-                            .nth(i)
-                            .get_attribute(
-                                attr
-                            )
-                        )
-
-                        if not src:
-
-                            continue
-
-                        src = absolute_url(
-                            src,
-                            url
-                        )
-
-                        if not src:
-
-                            continue
-
-                        image = download_image(
-                            src
-                        )
-
-                        if image:
-
-                            photo = src
-
-                            break
-
-                    if photo:
-
-                        break
-
-            except Exception:
-
-                pass
-
         message = (
             "🔵 Новое объявление iPhone\n\n"
             f"📱 {real_title}\n"
@@ -1591,7 +1566,7 @@ def parse_andele_card(
     except Exception as error:
 
         print(
-            f"❌ ANDELE ошибка карточки: "
+            f"❌ ANDELE ошибка: "
             f"{error}"
         )
 
@@ -1602,11 +1577,9 @@ def parse_andele_card(
         if page:
 
             try:
-
                 page.close()
 
             except Exception:
-
                 pass
 
 
@@ -1619,7 +1592,7 @@ def process_andele(
 ):
 
     print(
-        "🔵 ANDELE: запускаю Chromium..."
+        "🔵 ANDELE: проверяю сайт..."
     )
 
     page = None
@@ -1627,11 +1600,6 @@ def process_andele(
     try:
 
         page = browser.new_page()
-
-        print(
-            f"🔵 ANDELE: открываю "
-            f"{ANDELE_URL}"
-        )
 
         response = page.goto(
             ANDELE_URL,
@@ -1655,7 +1623,7 @@ def process_andele(
         )
 
         print(
-            f"🔵 ANDELE: всего карточек: "
+            f"🔵 ANDELE: карточек: "
             f"{len(links)}"
         )
 
@@ -1682,14 +1650,6 @@ def process_andele(
 
             iphone_count += 1
 
-            print(
-                "🎯 ANDELE: НАЙДЕН IPHONE!"
-            )
-
-            print(
-                ad["message"]
-            )
-
             send_photo_or_message(
                 ad["photo"],
                 ad["message"]
@@ -1707,7 +1667,605 @@ def process_andele(
     except Exception as error:
 
         print(
-            f"❌ ANDELE главная ошибка: "
+            f"❌ ANDELE ошибка: "
+            f"{error}"
+        )
+
+    finally:
+
+        if page:
+
+            try:
+                page.close()
+
+            except Exception:
+                pass
+
+
+# ============================================================
+# ============================================================
+#                  FACEBOOK MARKETPLACE
+# ============================================================
+# ============================================================
+
+def facebook_is_login_page(
+    page
+):
+
+    try:
+
+        current_url = page.url.lower()
+
+        if (
+            "login" in current_url
+            or "checkpoint" in current_url
+        ):
+
+            return True
+
+        text = (
+            page.locator(
+                "body"
+            )
+            .inner_text()
+            .lower()
+        )
+
+        login_words = [
+            "log in",
+            "login",
+            "войти",
+            "увійти",
+            "pieteikties"
+        ]
+
+        for word in login_words:
+
+            if word in text:
+
+                # Не считаем обычное слово
+                # login в ссылке достаточным.
+                if (
+                    "marketplace"
+                    not in current_url
+                ):
+
+                    return True
+
+        return False
+
+    except Exception:
+
+        return False
+
+
+def facebook_extract_image(
+    card,
+    page_url
+):
+
+    try:
+
+        images = card.locator(
+            "img"
+        )
+
+        count = images.count()
+
+        for i in range(
+            min(count, 10)
+        ):
+
+            src = (
+                images
+                .nth(i)
+                .get_attribute(
+                    "src"
+                )
+            )
+
+            if not src:
+
+                continue
+
+            src = absolute_url(
+                src,
+                page_url
+            )
+
+            if not src:
+
+                continue
+
+            low = src.lower()
+
+            if (
+                "profile" in low
+                or "avatar" in low
+                or "icon" in low
+            ):
+
+                continue
+
+            # Facebook CDN обычно отдаёт
+            # нормальную фотографию.
+            return src
+
+    except Exception:
+
+        pass
+
+    return None
+
+
+def facebook_is_iphone(
+    text
+):
+
+    low = text.lower()
+
+    if "iphone" not in low:
+
+        return False
+
+    bad_words = [
+
+        "case",
+        "cover",
+        "чехол",
+        "чехла",
+
+        "стекло",
+        "защитное стекло",
+
+        "cable",
+        "charger",
+        "кабель",
+        "зарядка",
+
+        "adapter",
+        "адаптер",
+
+        "airpods",
+        "watch",
+
+    ]
+
+    for word in bad_words:
+
+        if word in low:
+
+            # Если одновременно есть
+            # явное описание телефона,
+            # не отбрасываем сразу.
+            phone_words = [
+                "gb",
+                "battery",
+                "батар",
+                "телефон",
+                "phone",
+                "pro",
+                "plus",
+                "mini"
+            ]
+
+            if not any(
+                p in low
+                for p in phone_words
+            ):
+
+                return False
+
+    return True
+
+
+def facebook_extract_model(
+    text
+):
+
+    patterns = [
+
+        r"(iPhone\s+"
+        r"(?:SE|X|XR|XS|"
+        r"11|12|13|14|15|16|17)"
+        r"(?:\s+(?:Pro|Pro Max|"
+        r"Plus|Mini|Max|e))*)",
+
+        r"(iPhone\s+[A-Za-z0-9+ -]{1,25})",
+
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            value = clean_text(
+                match.group(1)
+            )
+
+            return value
+
+    return "iPhone"
+
+
+def facebook_parse_card(
+    card,
+    browser
+):
+
+    try:
+
+        text = clean_text(
+            card.inner_text()
+        )
+
+        if not text:
+
+            return None
+
+        if not facebook_is_iphone(
+            text
+        ):
+
+            return None
+
+        # ----------------------------------------------------
+        # LINK
+        # ----------------------------------------------------
+
+        links = card.locator(
+            "a"
+        )
+
+        href = None
+
+        for i in range(
+            min(links.count(), 10)
+        ):
+
+            candidate = (
+                links
+                .nth(i)
+                .get_attribute(
+                    "href"
+                )
+            )
+
+            if not candidate:
+
+                continue
+
+            if (
+                "/marketplace/item/"
+                in candidate
+            ):
+
+                href = candidate
+
+                break
+
+        if not href:
+
+            return None
+
+        url = normalize_url(
+            absolute_url(
+                href,
+                "https://www.facebook.com"
+            )
+        )
+
+        if not url:
+
+            return None
+
+        # ----------------------------------------------------
+        # MODEL
+        # ----------------------------------------------------
+
+        model = facebook_extract_model(
+            text
+        )
+
+        # ----------------------------------------------------
+        # PRICE
+        # ----------------------------------------------------
+
+        price = extract_price(
+            text
+        )
+
+        # ----------------------------------------------------
+        # MEMORY
+        # ----------------------------------------------------
+
+        memory = extract_memory(
+            text
+        )
+
+        # ----------------------------------------------------
+        # BATTERY
+        # ----------------------------------------------------
+
+        battery = extract_battery(
+            text
+        )
+
+        # ----------------------------------------------------
+        # CITY
+        # ----------------------------------------------------
+
+        city = extract_city(
+            text
+        )
+
+        # ----------------------------------------------------
+        # PHOTO
+        # ----------------------------------------------------
+
+        photo = (
+            facebook_extract_image(
+                card,
+                url
+            )
+        )
+
+        # ----------------------------------------------------
+        # MESSAGE
+        # ----------------------------------------------------
+
+        message = (
+            "🔴 Новое объявление iPhone\n\n"
+            f"📱 {model}\n"
+            f"💰 Цена: {price}\n"
+            f"💾 Память: {memory}\n"
+            f"🔋 Батарея: {battery}\n"
+            f"📍 Город: {city}\n\n"
+            f"🔗 {url}"
+        )
+
+        return {
+            "url": url,
+            "title": model,
+            "price": price,
+            "memory": memory,
+            "battery": battery,
+            "city": city,
+            "photo": photo,
+            "message": message
+        }
+
+    except Exception as error:
+
+        print(
+            f"🔴 Facebook ошибка карточки: "
+            f"{error}"
+        )
+
+        return None
+
+
+def process_facebook(
+    context
+):
+
+    if not FACEBOOK_ENABLED:
+
+        return
+
+    print(
+        "🔴 FACEBOOK: проверяю Marketplace..."
+    )
+
+    page = None
+
+    try:
+
+        page = context.new_page()
+
+        print(
+            "🔴 FACEBOOK: открываю Marketplace..."
+        )
+
+        response = page.goto(
+            FACEBOOK_SEARCH_URL,
+            wait_until="domcontentloaded",
+            timeout=45000
+        )
+
+        if response:
+
+            print(
+                f"FACEBOOK HTTP: "
+                f"{response.status}"
+            )
+
+        page.wait_for_timeout(
+            5000
+        )
+
+        # ----------------------------------------------------
+        # Проверяем авторизацию
+        # ----------------------------------------------------
+
+        if facebook_is_login_page(
+            page
+        ):
+
+            print(
+                "⚠️ FACEBOOK: нужна авторизация."
+            )
+
+            print(
+                "⚠️ Facebook Marketplace "
+                "не отдаёт объявления "
+                "без входа в аккаунт."
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # Прокрутка
+        # ----------------------------------------------------
+
+        for _ in range(4):
+
+            page.mouse.wheel(
+                0,
+                1800
+            )
+
+            page.wait_for_timeout(
+                1500
+            )
+
+        # ----------------------------------------------------
+        # Ищем Marketplace item links
+        # ----------------------------------------------------
+
+        item_links = page.locator(
+            'a[href*="/marketplace/item/"]'
+        )
+
+        count = item_links.count()
+
+        print(
+            f"🔴 FACEBOOK: найдено "
+            f"ссылок: {count}"
+        )
+
+        cards = []
+
+        # ----------------------------------------------------
+        # Берём родительские контейнеры
+        # ----------------------------------------------------
+
+        for i in range(
+            min(count, 100)
+        ):
+
+            try:
+
+                link = (
+                    item_links
+                    .nth(i)
+                )
+
+                href = link.get_attribute(
+                    "href"
+                )
+
+                if not href:
+
+                    continue
+
+                url = normalize_url(
+                    absolute_url(
+                        href,
+                        "https://www.facebook.com"
+                    )
+                )
+
+                if not url:
+
+                    continue
+
+                # Ищем ближайший контейнер.
+                card = link.locator(
+                    "xpath=ancestor::div[.//a[contains(@href,'/marketplace/item/')]][1]"
+                )
+
+                if card.count() == 0:
+
+                    card = link.locator(
+                        "xpath=.."
+                    )
+
+                cards.append(
+                    (
+                        card,
+                        url
+                    )
+                )
+
+            except Exception:
+
+                continue
+
+        sent = 0
+
+        # ----------------------------------------------------
+        # Обрабатываем карточки
+        # ----------------------------------------------------
+
+        checked_urls = set()
+
+        for card, url in cards:
+
+            if url in checked_urls:
+
+                continue
+
+            checked_urls.add(
+                url
+            )
+
+            if url in seen_facebook:
+
+                continue
+
+            try:
+
+                ad = facebook_parse_card(
+                    card,
+                    context
+                )
+
+                if not ad:
+
+                    continue
+
+                print(
+                    "🎯 FACEBOOK: НАЙДЕН IPHONE!"
+                )
+
+                print(
+                    ad["message"]
+                )
+
+                send_photo_or_message(
+                    ad["photo"],
+                    ad["message"]
+                )
+
+                seen_facebook.add(
+                    url
+                )
+
+                sent += 1
+
+            except Exception as error:
+
+                print(
+                    "🔴 Facebook ошибка "
+                    f"объявления: {error}"
+                )
+
+        print(
+            f"🔴 FACEBOOK: новых "
+            f"iPhone отправлено: {sent}"
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ FACEBOOK главная ошибка: "
             f"{error}"
         )
 
@@ -1725,116 +2283,22 @@ def process_andele(
 
 
 # ============================================================
-# ANDELE IMAGE FUNCTION
-# ============================================================
-
-def get_image_from_soup(
-    soup,
-    base_url
-):
-
-    # OG IMAGE
-    meta = soup.find(
-        "meta",
-        property="og:image"
-    )
-
-    if meta and meta.get(
-        "content"
-    ):
-
-        url = absolute_url(
-            meta["content"],
-            base_url
-        )
-
-        if download_image(
-            url
-        ):
-
-            return url
-
-    # Twitter image
-    for meta in soup.find_all(
-        "meta"
-    ):
-
-        name = (
-            meta.get("name")
-            or meta.get("property")
-            or ""
-        ).lower()
-
-        if name in (
-            "twitter:image",
-            "twitter:image:src"
-        ):
-
-            if meta.get(
-                "content"
-            ):
-
-                url = absolute_url(
-                    meta["content"],
-                    base_url
-                )
-
-                if download_image(
-                    url
-                ):
-
-                    return url
-
-    # IMG
-    for img in soup.find_all(
-        "img"
-    ):
-
-        for attr in (
-            "src",
-            "data-src",
-            "data-original",
-            "data-lazy-src"
-        ):
-
-            src = img.get(
-                attr
-            )
-
-            if not src:
-
-                continue
-
-            src = absolute_url(
-                src,
-                base_url
-            )
-
-            if not src:
-
-                continue
-
-            if download_image(
-                src
-            ):
-
-                return src
-
-    return None
-
-
-# ============================================================
-# СТАРТОВОЕ СООБЩЕНИЕ
+# START MESSAGE
 # ============================================================
 
 def send_start_message():
 
     text = (
         "🤖 Бот запущен!\n\n"
+
         "🟢 SS.LV — поиск iPhone\n"
-        "🔵 Andele Mandele — поиск iPhone\n\n"
-        "📷 SS.LV — усиленный поиск фотографий\n"
-        "🌐 Andele — Chromium\n\n"
+
+        "🔵 Andele Mandele — поиск iPhone\n"
+
+        "🔴 Facebook Marketplace — поиск iPhone\n\n"
+
+        "📷 Фото включены\n\n"
+
         f"⏱ Проверка каждые "
         f"{CHECK_INTERVAL} секунд."
     )
@@ -1859,19 +2323,15 @@ def main():
     )
 
     print(
-        "🟢 SS.LV — поиск iPhone"
+        "🟢 SS.LV"
     )
 
     print(
-        "🔵 Andele Mandele — поиск iPhone"
+        "🔵 Andele Mandele"
     )
 
     print(
-        "📷 SS.LV — новый поиск фотографий"
-    )
-
-    print(
-        "🌐 Andele: Playwright + Chromium"
+        "🔴 Facebook Marketplace"
     )
 
     print(
@@ -1887,8 +2347,13 @@ def main():
 
     with sync_playwright() as p:
 
+        # ====================================================
+        # CHROMIUM
+        # ====================================================
+
         browser = p.chromium.launch(
             headless=True,
+
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -1899,9 +2364,73 @@ def main():
             ]
         )
 
-        print(
-            "🌐 Chromium запущен."
+        # ====================================================
+        # ANDELE CONTEXT
+        # ====================================================
+
+        andele_context = browser.new_context(
+            user_agent=HEADERS[
+                "User-Agent"
+            ],
+            locale="lv-LV"
         )
+
+        # ====================================================
+        # FACEBOOK CONTEXT
+        # ====================================================
+
+        facebook_context = None
+
+        if FACEBOOK_ENABLED:
+
+            if os.path.exists(
+                FACEBOOK_SESSION_FILE
+            ):
+
+                print(
+                    "🔴 FACEBOOK: "
+                    "найдена сохранённая сессия."
+                )
+
+                try:
+
+                    facebook_context = (
+                        browser.new_context(
+                            storage_state=(
+                                FACEBOOK_SESSION_FILE
+                            ),
+
+                            user_agent=HEADERS[
+                                "User-Agent"
+                            ],
+
+                            locale="lv-LV"
+                        )
+                    )
+
+                except Exception as error:
+
+                    print(
+                        "❌ Facebook session "
+                        f"ошибка: {error}"
+                    )
+
+            else:
+
+                print(
+                    "⚠️ FACEBOOK: "
+                    "facebook_session.json "
+                    "не найден."
+                )
+
+                print(
+                    "⚠️ Facebook модуль "
+                    "пока не сможет войти."
+                )
+
+        # ====================================================
+        # LOOP
+        # ====================================================
 
         while True:
 
@@ -1920,19 +2449,40 @@ def main():
                     "=" * 70
                 )
 
-                # ============================================
+                # =================================================
                 # SS.LV
-                # ============================================
+                # =================================================
 
                 process_sslv()
 
-                # ============================================
+                # =================================================
                 # ANDELE
-                # ============================================
+                # =================================================
 
                 process_andele(
-                    browser
+                    andele_context
                 )
+
+                # =================================================
+                # FACEBOOK
+                # =================================================
+
+                if facebook_context:
+
+                    process_facebook(
+                        facebook_context
+                    )
+
+                else:
+
+                    print(
+                        "🔴 FACEBOOK: "
+                        "сессия ещё не настроена."
+                    )
+
+                # =================================================
+                # WAIT
+                # =================================================
 
                 print(
                     f"⏱ Следующая проверка "
@@ -1961,6 +2511,28 @@ def main():
                 time.sleep(
                     CHECK_INTERVAL
                 )
+
+        # ====================================================
+        # CLOSE
+        # ====================================================
+
+        if facebook_context:
+
+            try:
+
+                facebook_context.close()
+
+            except Exception:
+
+                pass
+
+        try:
+
+            andele_context.close()
+
+        except Exception:
+
+            pass
 
         browser.close()
 
